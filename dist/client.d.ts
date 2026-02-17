@@ -1,0 +1,37 @@
+import { type AgentResponse, type HandshakeResult, type KeyPair, type SekuireClientConfig } from "./types";
+/**
+ * Sekuire client for verifying agents and performing handshakes
+ */
+export declare class SekuireClient {
+    private readonly keyPair;
+    private readonly httpClient;
+    constructor(keyPair: KeyPair, config: SekuireClientConfig);
+    /**
+     * Perform the full handshake with a remote agent
+     */
+    connect(agentUrl: string, expectedAgentId?: string): Promise<HandshakeResult>;
+    /**
+     * Verify an agent's signature
+     */
+    private verifyAgentSignature;
+    /**
+     * Fetch agent's public key from the registry
+     */
+    fetchAgentPublicKey(agentId: string): Promise<string>;
+    /**
+     * Get agent information from the registry
+     */
+    getAgentInfo(agentId: string): Promise<AgentResponse>;
+    /**
+     * Search for agents in the registry
+     */
+    searchAgents(query: string): Promise<AgentResponse[]>;
+    /**
+     * Sign data with the client's private key
+     */
+    sign(data: string): string;
+    /**
+     * Get the client's public key
+     */
+    getPublicKey(): string;
+}

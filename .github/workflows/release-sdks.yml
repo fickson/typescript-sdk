@@ -1,0 +1,285 @@
+name: Release SDKs
+
+on:
+  workflow_dispatch:
+    inputs:
+      sdk:
+        description: 'Which SDK to release'
+        required: true
+        type: choice
+        options:
+          - rust
+          - typescript
+          - python
+      bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - beta
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish-rust-sdk:
+    name: Publish Rust SDK to Crates.io
+    runs-on: ubuntu-latest
+    if: github.event.inputs.sdk == 'rust'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-edit
+        run: cargo install cargo-edit
+
+      - name: Bump SDK Version
+        run: |
+          cd packages/sdks/rust
+          cargo set-version --bump ${{ github.event.inputs.bump }}
+          NEW_VERSION=$(grep '^version =' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "SDK_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Update Cargo.lock
+        run: cargo check -p sekuire-sdk
+
+      - name: Build SDK
+        run: |
+          cd packages/sdks/rust
+          cargo build --release
+
+      - name: Run Tests
+        run: |
+          cd packages/sdks/rust
+          cargo test
+
+      - name: Commit Version Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/sdks/rust/Cargo.toml Cargo.lock
+          git commit -m "chore: bump Rust SDK to v${{ env.SDK_VERSION }}"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD
+
+      - name: Create Git Tag
+        run: |
+          git tag -a "rust-sdk-v${{ env.SDK_VERSION }}" -m "Rust SDK v${{ env.SDK_VERSION }}"
+          git push origin "rust-sdk-v${{ env.SDK_VERSION }}"
+
+      - name: Publish SDK Package
+        run: |
+          cd packages/sdks/rust
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: 'rust-sdk-v${{ env.SDK_VERSION }}'
+          name: 'Rust SDK v${{ env.SDK_VERSION }}'
+          body: |
+            ## Rust SDK Release
+
+            ### Installation
+
+            Add to your `Cargo.toml`:
+
+            ```toml
+            [dependencies]
+            sekuire-sdk = "${{ env.SDK_VERSION }}"
+            ```
+
+            ### Usage
+
+            ```rust
+            use sekuire_sdk::get_agent;
+
+            #[tokio::main]
+            async fn main() -> anyhow::Result<()> {
+                let mut agent = get_agent(Some("assistant"), None).await?;
+                let response = agent.chat("Hello!", None).await?;
+                println!("{}", response);
+                Ok(())
+            }
+            ```
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-typescript-sdk:
+    name: Publish TypeScript SDK to NPM
+    runs-on: ubuntu-latest
+    if: github.event.inputs.sdk == 'typescript'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Bump Package Version
+        run: |
+          cd packages/sdks/typescript
+          npm version ${{ github.event.inputs.bump }} --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+          echo "TS_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Commit Version Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/sdks/typescript/package.json
+          git commit -m "chore: bump TypeScript SDK to v${{ env.TS_VERSION }}"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD
+
+      - name: Create Git Tag
+        run: |
+          git tag -a "ts-sdk-v${{ env.TS_VERSION }}" -m "TypeScript SDK v${{ env.TS_VERSION }}"
+          git push origin "ts-sdk-v${{ env.TS_VERSION }}"
+
+      - name: Install Dependencies
+        run: |
+          cd packages/sdks/typescript
+          pnpm install
+
+      - name: Build Package
+        run: |
+          cd packages/sdks/typescript
+          pnpm build
+
+      - name: Configure NPM Authentication
+        run: |
+          cd packages/sdks/typescript
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          echo "registry=https://registry.npmjs.org/" >> .npmrc
+          echo "@sekuire:registry=https://registry.npmjs.org/" >> .npmrc
+
+      - name: Publish to NPM
+        run: |
+          cd packages/sdks/typescript
+          npm publish --access public
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: 'ts-sdk-v${{ env.TS_VERSION }}'
+          name: 'TypeScript SDK v${{ env.TS_VERSION }}'
+          body: |
+            ## TypeScript SDK Release
+
+            ### Installation
+
+            ```bash
+            npm install @sekuire/sdk@${{ env.TS_VERSION }}
+            ```
+
+            ### Usage
+
+            ```typescript
+            import { getAgent } from '@sekuire/sdk';
+
+            const agent = await getAgent();
+            await agent.run("Your task here");
+            ```
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-python-sdk:
+    name: Publish Python SDK to PyPI
+    runs-on: ubuntu-latest
+    if: github.event.inputs.sdk == 'python'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Build Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine setuptools wheel bump2version
+
+      - name: Bump Package Version
+        run: |
+          cd packages/sdks/python
+          bump2version ${{ github.event.inputs.bump }} --current-version $(grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/') --new-version-only
+          NEW_VERSION=$(grep '^version = ' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "PY_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Commit Version Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/sdks/python/pyproject.toml
+          git commit -m "chore: bump Python SDK to v${{ env.PY_VERSION }}"
+          git pull --rebase origin ${{ github.ref_name }}
+          git push origin HEAD
+
+      - name: Create Git Tag
+        run: |
+          git tag -a "py-sdk-v${{ env.PY_VERSION }}" -m "Python SDK v${{ env.PY_VERSION }}"
+          git push origin "py-sdk-v${{ env.PY_VERSION }}"
+
+      - name: Build Package
+        run: |
+          cd packages/sdks/python
+          python -m build
+
+      - name: Publish to PyPI
+        run: |
+          cd packages/sdks/python
+          twine upload dist/* -u __token__ -p ${{ secrets.PYPI_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: 'py-sdk-v${{ env.PY_VERSION }}'
+          name: 'Python SDK v${{ env.PY_VERSION }}'
+          body: |
+            ## Python SDK Release
+
+            ### Installation
+
+            ```bash
+            pip install sekuire-sdk==${{ env.PY_VERSION }}
+            ```
+
+            ### Usage
+
+            ```python
+            from sekuire_sdk import get_agent
+
+            agent = get_agent()
+            agent.run("Your task here")
+            ```
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,93 @@
+name: Bug Report
+description: Report a bug in Sekuire SDKs, CLI, or platform
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill out the sections below so we can reproduce and fix the issue.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which part of Sekuire is affected?
+      options:
+        - TypeScript SDK (@sekuire/sdk)
+        - Python SDK (sekuire)
+        - Rust SDK (sekuire-sdk)
+        - CLI (sekuire-agent-cli)
+        - Core API
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: SDK/CLI version (run `sekuire --version` or check package.json/Cargo.toml/pyproject.toml)
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to reproduce the behavior.
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened. Include error messages or logs if available.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Operating Mode
+      description: Were you running in standalone or platform mode?
+      options:
+        - Standalone (no SEKUIRE_INSTALL_TOKEN)
+        - Platform (connected to Sekuire API)
+        - Both / Not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, runtime version, relevant config.
+      placeholder: |
+        OS: macOS 15.3
+        Node.js: 22.x
+        SDK mode: standalone
+    validations:
+      required: false

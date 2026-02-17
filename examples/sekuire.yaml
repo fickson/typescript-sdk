@@ -1,0 +1,88 @@
+agent:
+  name: example-agent
+  version: 1.0.0
+  compliance_level: standard
+
+permissions:
+  network:
+    default_deny: true
+    allow:
+      - https://api.openai.com/
+      - https://api.anthropic.com/
+      - https://registry.sekuire.ai/
+    block:
+      - https://evil.com
+      - https://malicious-site.com
+
+  filesystem:
+    default_deny: true
+    allow_read:
+      - ./data/
+      - ./config/
+    allow_write:
+      - ./logs/
+    block_all:
+      - /etc/
+      - /var/
+      - ~/.ssh/
+
+  env:
+    default_deny: false
+    allow:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - SEKUIRE_API_KEY
+      - NODE_ENV
+    block:
+      - AWS_SECRET_ACCESS_KEY
+      - DATABASE_PASSWORD
+
+  tools:
+    enforce_whitelist: true
+    audit_all_calls: true
+    blocked_patterns:
+      - os.system
+      - eval(
+      - rm -rf
+      - sudo
+    timeout_seconds: 30
+
+  model:
+    allowed_models:
+      - gpt-4
+      - gpt-4-turbo
+      - claude-3-opus
+      - claude-3-sonnet
+    max_temperature: 0.9
+    max_tokens: 4000
+    audit_api_calls: true
+
+  content:
+    blocked_input_patterns:
+      - password
+      - secret
+      - api_key
+      - credit_card
+    blocked_output_patterns:
+      - sudo su
+      - rm -rf /
+    max_response_length: 10000
+
+logging:
+  level: info
+  audit_all_requests: true
+  audit_all_tool_calls: true
+  log_network_requests: true
+  log_file_access: true
+  retention_days: 30
+
+alerts:
+  real_time_monitoring: true
+  security_violation_alerts: true
+  compliance_breach_alerts: true
+  performance_anomaly_alerts: false
+
+enterprise:
+  tenant_id: example-corp
+  department: ai-research
+  cost_center: AI-001

@@ -1,0 +1,11 @@
+project:
+  name: TestAgent
+  version: "1.0.0"
+agent:
+  name: TestAgent
+  system_prompt: "You are a test agent."
+  tools: "[]"
+  llm:
+    provider: openai
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY

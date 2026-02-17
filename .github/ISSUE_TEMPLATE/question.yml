@@ -1,0 +1,44 @@
+name: Question
+description: Ask a question about Sekuire usage or architecture
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? Check the [documentation](https://docs.sekuire.ai) first. If you still need help, fill out the form below.
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: What area is your question about?
+      options:
+        - Getting started / Setup
+        - Identity and Crypto
+        - Policy enforcement
+        - Standalone mode
+        - Platform integration
+        - SDK usage (TypeScript)
+        - SDK usage (Python)
+        - SDK usage (Rust)
+        - CLI usage
+        - OAGS specification
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: Your question in detail.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What have you tried?
+      description: Any documentation you read, code you tried, or errors you encountered.
+    validations:
+      required: false

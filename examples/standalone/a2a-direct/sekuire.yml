@@ -1,0 +1,4 @@
+project:
+  name: a2a-direct
+  version: 1.0.0
+  description: Agent-to-agent communication using A2A protocol

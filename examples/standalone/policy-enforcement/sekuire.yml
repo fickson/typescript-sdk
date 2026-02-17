@@ -1,0 +1,13 @@
+project:
+  name: policy-enforcement-demo
+  version: 1.0.0
+
+permissions:
+  network:
+    enabled: true
+    require_tls: true
+    allowed_domains:
+      - api.openai.com
+      - api.anthropic.com
+    blocked_domains:
+      - evil.com

@@ -1,0 +1,49 @@
+project:
+  name: multi-provider
+  version: 1.0.0
+
+agents:
+  openai-agent:
+    name: openai-agent
+    system_prompt: ./prompt.md
+    tools: ./tools.json
+    llm:
+      provider: openai
+      model: gpt-4o-mini
+      api_key_env: OPENAI_API_KEY
+      temperature: 0.3
+      max_tokens: 256
+
+  anthropic-agent:
+    name: anthropic-agent
+    system_prompt: ./prompt.md
+    tools: ./tools.json
+    llm:
+      provider: anthropic
+      model: claude-3-5-sonnet-20241022
+      api_key_env: ANTHROPIC_API_KEY
+      temperature: 0.3
+      max_tokens: 256
+
+  google-agent:
+    name: google-agent
+    system_prompt: ./prompt.md
+    tools: ./tools.json
+    llm:
+      provider: google
+      model: gemini-1.5-flash
+      api_key_env: GOOGLE_API_KEY
+      temperature: 0.3
+      max_tokens: 256
+
+  ollama-agent:
+    name: ollama-agent
+    system_prompt: ./prompt.md
+    tools: ./tools.json
+    llm:
+      provider: ollama
+      model: llama3
+      api_key_env: OLLAMA_API_KEY
+      base_url: http://localhost:11434
+      temperature: 0.3
+      max_tokens: 256
