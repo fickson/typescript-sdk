@@ -78,7 +78,7 @@ export declare class SekuireCrypto {
      */
     static isValidPublicKey(hex: string): boolean;
     /**
-     * Validate Ed25519 private key format (64 bytes)
+     * Validate Ed25519 private key format (32-byte seed or 64-byte secret key)
      */
     static isValidPrivateKey(hex: string): boolean;
     /**

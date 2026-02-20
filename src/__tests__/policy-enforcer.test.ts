@@ -126,6 +126,40 @@ describe('PolicyEnforcer', () => {
       const enforcer = new PolicyEnforcer(policyNoRestrictions);
       expect(() => enforcer.enforceTool('any-tool')).not.toThrow();
     });
+
+    it('should support category wildcard policies used by generated sekuire.yml', () => {
+      const wildcardPolicy = {
+        ...mockPolicy,
+        content: {
+          tools: {
+            allowed_tools: [
+              { name: 'network:*', description: 'Network tools' },
+              { name: 'data:*', description: 'Data tools' },
+              { name: 'system:*', description: 'System tools' },
+            ],
+          },
+        },
+      };
+
+      const enforcer = new PolicyEnforcer(wildcardPolicy);
+
+      expect(() => enforcer.enforceTool('http_post')).not.toThrow();
+      expect(() => enforcer.enforceTool('web_search')).not.toThrow();
+      expect(() => enforcer.enforceTool('download_file')).not.toThrow();
+      expect(() => enforcer.enforceTool('dns_lookup')).not.toThrow();
+      expect(() => enforcer.enforceTool('ping')).not.toThrow();
+
+      expect(() => enforcer.enforceTool('json_parse')).not.toThrow();
+      expect(() => enforcer.enforceTool('csv_parse')).not.toThrow();
+      expect(() => enforcer.enforceTool('base64_encode')).not.toThrow();
+      expect(() => enforcer.enforceTool('hash')).not.toThrow();
+
+      expect(() => enforcer.enforceTool('env_get')).not.toThrow();
+      expect(() => enforcer.enforceTool('get_cwd')).not.toThrow();
+      expect(() => enforcer.enforceTool('get_platform')).not.toThrow();
+
+      expect(() => enforcer.enforceTool('file_read')).toThrow(PolicyViolationError);
+    });
   });
 
   describe('enforceNetwork', () => {

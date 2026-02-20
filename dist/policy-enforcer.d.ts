@@ -9,7 +9,9 @@ export declare class PolicyEnforcer {
     enforceNetwork(domain: string, protocol: string): void;
     enforceFilesystem(path: string, operation: string): void;
     enforceTool(toolName: string): void;
-    private getCategoryPrefix;
+    private matchesCategoryPattern;
+    private toolMatchesCategory;
+    private toolMatchesCategoryOperation;
     enforceModel(model: string): void;
     enforceApi(service: string): void;
     enforceRateLimit(type: "request" | "token", count?: number): void;

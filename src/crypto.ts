@@ -25,7 +25,19 @@ export class SekuireCrypto {
       const messageBytes =
         typeof message === "string" ? Buffer.from(message, "utf8") : message;
 
-      const signature = nacl.sign.detached(messageBytes, privateKey);
+      // Accept both 32-byte Ed25519 seeds (CLI-generated) and 64-byte nacl secret keys.
+      const secretKey =
+        privateKey.length === 32
+          ? nacl.sign.keyPair.fromSeed(privateKey).secretKey
+          : privateKey;
+
+      if (secretKey.length !== 64) {
+        throw new CryptoError(
+          `Invalid private key length: expected 32-byte seed or 64-byte secret key, got ${privateKey.length} bytes`,
+        );
+      }
+
+      const signature = nacl.sign.detached(messageBytes, secretKey);
       return Buffer.from(signature).toString("hex");
     } catch (error) {
       throw new CryptoError(
@@ -200,12 +212,13 @@ export class SekuireCrypto {
   }
 
   /**
-   * Validate Ed25519 private key format (64 bytes)
+   * Validate Ed25519 private key format (32-byte seed or 64-byte secret key)
    */
   static isValidPrivateKey(hex: string): boolean {
     if (!SekuireCrypto.isValidHex(hex)) return false;
     try {
-      return SekuireCrypto.hexToBytes(hex).length === 64;
+      const len = SekuireCrypto.hexToBytes(hex).length;
+      return len === 32 || len === 64;
     } catch {
       return false;
     }

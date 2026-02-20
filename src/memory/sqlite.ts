@@ -1,4 +1,7 @@
 import { BaseMemoryStorage, type MemoryMessage } from './base';
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 
 type BetterSqlite3Database = any;
 
@@ -26,9 +29,15 @@ export class SQLiteStorage extends BaseMemoryStorage {
     if (this.connectionPromise && !this._connected) return this.connectionPromise;
 
     try {
-      const Database = (await import('better-sqlite3')).default;
+      const filename = this.config.filename;
+      const dirname = path.dirname(filename);
+      if (dirname && dirname !== '.') {
+        await fs.mkdir(dirname, { recursive: true });
+      }
 
-      this.db = new Database(this.config.filename, {
+      const Database = await this.loadDatabaseDriver();
+
+      this.db = new Database(filename, {
         readonly: this.config.readonly || false,
       });
 
@@ -39,6 +48,23 @@ export class SQLiteStorage extends BaseMemoryStorage {
     } catch (error) {
       this.connectionPromise = null;
       throw new Error(`Failed to initialize SQLite: ${error}`);
+    }
+  }
+
+  private async loadDatabaseDriver(): Promise<any> {
+    try {
+      const requireFromCwd = createRequire(path.join(process.cwd(), 'package.json'));
+      const loaded = requireFromCwd('better-sqlite3');
+      return loaded.default ?? loaded;
+    } catch {
+      try {
+        const loaded = await import('better-sqlite3');
+        return loaded.default ?? loaded;
+      } catch (error) {
+        throw new Error(
+          `Unable to load better-sqlite3. Install it in your agent project and rebuild native modules for the active Node version. ${error}`
+        );
+      }
     }
   }
 

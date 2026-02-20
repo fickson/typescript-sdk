@@ -44,21 +44,21 @@ export const llm = {
   openai: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return OpenAIProvider.create({
       ...config,
-      model: config.model || 'gpt-4.1',
+      model: config.model || 'gpt-5',
     });
   },
 
   anthropic: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return AnthropicProvider.create({
       ...config,
-      model: config.model || 'claude-sonnet-4-20250514',
+      model: config.model || 'claude-sonnet-4-5-20250929',
     });
   },
 
   google: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return GoogleProvider.create({
       ...config,
-      model: config.model || 'gemini-3-pro-preview',
+      model: config.model || 'gemini-3.1-pro-preview-06-17',
     });
   },
 

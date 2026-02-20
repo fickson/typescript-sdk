@@ -61,6 +61,7 @@ export class SekuireClient {
         clientNonce,
         welcome.agentId,
         welcome.signatureC,
+        welcome.agentPublicKey,
       );
 
       // 5. Sign agent nonce and send AUTH
@@ -68,7 +69,11 @@ export class SekuireClient {
         welcome.agentNonce,
         this.keyPair.privateKey,
       );
-      const auth: HandshakeAuth = { signatureA };
+      const auth: HandshakeAuth = {
+        signatureA,
+        clientPublicKey: this.keyPair.publicKey,
+        clientNonce,
+      };
 
       await this.httpClient.post(`${agentUrl}/sekuire/auth`, auth);
 
@@ -99,10 +104,17 @@ export class SekuireClient {
     clientNonce: string,
     agentId: string,
     signatureHex: string,
+    directPublicKey?: string,
   ): Promise<void> {
     try {
-      // Fetch agent's public key from registry
-      const publicKey = await this.fetchAgentPublicKey(agentId);
+      let publicKey = directPublicKey;
+      if (publicKey && !SekuireCrypto.isValidPublicKey(publicKey)) {
+        throw new CryptoError("Invalid public key format from handshake response");
+      }
+
+      if (!publicKey) {
+        publicKey = await this.fetchAgentPublicKey(agentId);
+      }
 
       // Verify the signature
       const isValid = SekuireCrypto.verify(

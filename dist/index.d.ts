@@ -1513,10 +1513,13 @@ interface HandshakeWelcome {
     agentId: string;
     agentNonce: string;
     signatureC: string;
+    agentPublicKey: string;
     credentials: string[];
 }
 interface HandshakeAuth {
     signatureA: string;
+    clientPublicKey: string;
+    clientNonce?: string;
 }
 interface VerifyAgentRequest {
     sekuireId: string;
@@ -1876,6 +1879,21 @@ interface AgentConfig {
     llm: LLMConfig;
     memory?: MemoryConfig;
     compliance?: ComplianceConfig;
+    allowed_tools?: string[];
+    blocked_tools?: string[];
+    network?: {
+        enabled?: boolean;
+        require_tls?: boolean;
+        allow?: string[];
+        block?: string[];
+    };
+    filesystem?: {
+        enabled?: boolean;
+        allow_read?: string[];
+        allow_write?: string[];
+        block_all?: string[];
+        allowed_extensions?: string[];
+    };
     models?: {
         allowed_models?: string[];
         blocked_models?: string[];
@@ -1898,7 +1916,7 @@ interface LLMConfig {
     base_url?: string;
 }
 interface MemoryConfig {
-    type: 'in-memory' | 'buffer' | 'redis' | 'postgres' | 'sqlite' | 'upstash' | 'cloudflare-kv' | 'cloudflare-d1' | 'dynamodb' | 'turso' | 'convex' | string;
+    type: 'in-memory' | 'buffer' | 'redis' | 'postgres' | 'sqlite' | 'file' | 'upstash' | 'cloudflare-kv' | 'cloudflare-d1' | 'dynamodb' | 'turso' | 'convex' | string;
     max_messages?: number;
     redis?: {
         url?: string;
@@ -1920,6 +1938,9 @@ interface MemoryConfig {
     sqlite?: {
         filename: string;
         tableName?: string;
+    };
+    file?: {
+        path: string;
     };
     upstash?: {
         url: string;
@@ -1953,7 +1974,40 @@ interface MemoryConfig {
         url: string;
         adminKey?: string;
     };
-    config?: Record<string, unknown>;
+    config?: {
+        filename?: string;
+        path?: string;
+        url?: string;
+        token?: string;
+        table_name?: string;
+        tableName?: string;
+        namespace_id?: string;
+        namespaceId?: string;
+        database_id?: string;
+        databaseId?: string;
+        account_id?: string;
+        accountId?: string;
+        api_token?: string;
+        apiToken?: string;
+        auth_token?: string;
+        authToken?: string;
+        admin_key?: string;
+        adminKey?: string;
+        connection_string?: string;
+        connectionString?: string;
+        host?: string;
+        port?: number;
+        database?: string;
+        user?: string;
+        password?: string;
+        db?: number;
+        keyPrefix?: string;
+        endpoint?: string;
+        create_table?: boolean;
+        createTable?: boolean;
+        readonly?: boolean;
+        [key: string]: unknown;
+    };
 }
 interface ComplianceConfig {
     framework?: string;
@@ -2080,7 +2134,7 @@ declare class SekuireCrypto {
      */
     static isValidPublicKey(hex: string): boolean;
     /**
-     * Validate Ed25519 private key format (64 bytes)
+     * Validate Ed25519 private key format (32-byte seed or 64-byte secret key)
      */
     static isValidPrivateKey(hex: string): boolean;
     /**
@@ -2362,6 +2416,7 @@ declare class SQLiteStorage extends BaseMemoryStorage {
     private connectionPromise;
     constructor(config: SQLiteConfig);
     connect(): Promise<void>;
+    private loadDatabaseDriver;
     private ensureTableExists;
     private ensureConnected;
     add(sessionId: string, message: MemoryMessage): Promise<void>;
@@ -2370,6 +2425,10 @@ declare class SQLiteStorage extends BaseMemoryStorage {
     delete(sessionId: string): Promise<void>;
     exists(sessionId: string): Promise<boolean>;
     disconnect(): Promise<void>;
+}
+
+interface FileStorageConfig {
+    path: string;
 }
 
 interface UpstashConfig {
@@ -2524,13 +2583,14 @@ declare function getStorageInfo(): Array<{
     description?: string;
 }>;
 
-type BuiltInMemoryType = 'in-memory' | 'buffer' | 'redis' | 'postgres' | 'sqlite' | 'upstash' | 'cloudflare-kv' | 'cloudflare-d1' | 'dynamodb' | 'turso' | 'convex';
+type BuiltInMemoryType = 'in-memory' | 'buffer' | 'redis' | 'postgres' | 'sqlite' | 'file' | 'upstash' | 'cloudflare-kv' | 'cloudflare-d1' | 'dynamodb' | 'turso' | 'convex';
 type MemoryType = BuiltInMemoryType | string;
 interface MemoryFactoryConfig {
     type: MemoryType;
     redis?: RedisConfig;
     postgres?: PostgresConfig;
     sqlite?: SQLiteConfig;
+    file?: FileStorageConfig;
     upstash?: UpstashConfig;
     cloudflareKV?: CloudflareKVConfig;
     cloudflareD1?: CloudflareD1Config;
@@ -2552,7 +2612,9 @@ declare class PolicyEnforcer {
     enforceNetwork(domain: string, protocol: string): void;
     enforceFilesystem(path: string, operation: string): void;
     enforceTool(toolName: string): void;
-    private getCategoryPrefix;
+    private matchesCategoryPattern;
+    private toolMatchesCategory;
+    private toolMatchesCategoryOperation;
     enforceModel(model: string): void;
     enforceApi(service: string): void;
     enforceRateLimit(type: "request" | "token", count?: number): void;
@@ -2701,7 +2763,10 @@ declare function getTools(agentName?: string, configPath?: string): Promise<Tool
 declare abstract class SekuireServer {
     protected readonly agentId: string;
     protected readonly keyPair: KeyPair;
+    private readonly pendingHandshakes;
+    private static readonly HANDSHAKE_TTL_MS;
     constructor(agentId: string, keyPair: KeyPair);
+    private purgeExpiredHandshakes;
     /**
      * Handle the HELLO handshake message
      */

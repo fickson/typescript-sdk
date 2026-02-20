@@ -13,10 +13,25 @@ import {
  * Base class for implementing Sekuire protocol servers
  */
 export abstract class SekuireServer {
+  private readonly pendingHandshakes = new Map<
+    string,
+    { agentNonce: string; createdAt: number }
+  >();
+  private static readonly HANDSHAKE_TTL_MS = 5 * 60 * 1000;
+
   constructor(
     protected readonly agentId: string,
     protected readonly keyPair: KeyPair,
   ) {}
+
+  private purgeExpiredHandshakes(): void {
+    const now = Date.now();
+    for (const [clientNonce, pending] of this.pendingHandshakes) {
+      if (now - pending.createdAt > SekuireServer.HANDSHAKE_TTL_MS) {
+        this.pendingHandshakes.delete(clientNonce);
+      }
+    }
+  }
 
   /**
    * Handle the HELLO handshake message
@@ -30,6 +45,11 @@ export abstract class SekuireServer {
 
       // Generate agent nonce
       const agentNonce = SekuireCrypto.generateNonce();
+      this.purgeExpiredHandshakes();
+      this.pendingHandshakes.set(hello.clientNonce, {
+        agentNonce,
+        createdAt: Date.now(),
+      });
 
       // Sign the client nonce
       const signatureC = SekuireCrypto.sign(
@@ -42,6 +62,7 @@ export abstract class SekuireServer {
         agentId: this.agentId,
         agentNonce,
         signatureC,
+        agentPublicKey: this.keyPair.publicKey,
         credentials: [], // TODO: Add verifiable credentials support
       };
     } catch (error) {
@@ -60,19 +81,41 @@ export abstract class SekuireServer {
    */
   async handleAuth(auth: HandshakeAuth, clientNonce: string): Promise<void> {
     try {
-      // In a real implementation, we would:
-      // 1. Extract client public key from some registry or JWT
-      // 2. Verify the signature of agentNonce
-      // 3. Complete mutual authentication
-
-      // For now, just validate the signature format
       if (!SekuireCrypto.isValidHex(auth.signatureA)) {
         throw new ProtocolError("Invalid signature format");
       }
 
-      // TODO: Implement full client verification
-      // This would involve looking up the client's public key
-      // and verifying they signed our agent nonce correctly
+      if (!SekuireCrypto.isValidNonce(clientNonce)) {
+        throw new ProtocolError("Invalid client nonce format");
+      }
+
+      if (auth.clientNonce && auth.clientNonce !== clientNonce) {
+        throw new ProtocolError("Client nonce mismatch");
+      }
+
+      if (!auth.clientPublicKey) {
+        throw new ProtocolError("Missing client public key");
+      }
+      if (!SekuireCrypto.isValidPublicKey(auth.clientPublicKey)) {
+        throw new ProtocolError("Invalid client public key format");
+      }
+
+      this.purgeExpiredHandshakes();
+      const pending = this.pendingHandshakes.get(clientNonce);
+      if (!pending) {
+        throw new ProtocolError("Handshake not found or expired");
+      }
+
+      const verified = SekuireCrypto.verify(
+        pending.agentNonce,
+        auth.signatureA,
+        auth.clientPublicKey,
+      );
+      if (!verified) {
+        throw new ProtocolError("Client signature verification failed");
+      }
+
+      this.pendingHandshakes.delete(clientNonce);
     } catch (error) {
       if (error instanceof ProtocolError || error instanceof CryptoError) {
         throw error;
@@ -122,8 +165,10 @@ export function createSekuireExpressMiddleware(server: SekuireServer) {
           const result = await server.handleHello(req.body);
           return res.json(result);
         } else if (req.path === "/sekuire/auth" && req.method === "POST") {
-          // Store client nonce from previous step (in real implementation, use session/storage)
-          const clientNonce = req.headers["x-client-nonce"];
+          const nonceFromBody = req.body?.clientNonce;
+          const nonceFromHeader = req.headers["x-client-nonce"];
+          const rawNonce = nonceFromBody ?? nonceFromHeader;
+          const clientNonce = Array.isArray(rawNonce) ? rawNonce[0] : rawNonce;
           if (!clientNonce) {
             return res.status(400).json({ error: "Missing client nonce" });
           }
@@ -178,7 +223,10 @@ export function createSekuireFastifyPlugin(server: SekuireServer) {
 
     fastify.post("/sekuire/auth", async (request: any, reply: any) => {
       try {
-        const clientNonce = request.headers["x-client-nonce"];
+        const nonceFromBody = request.body?.clientNonce;
+        const nonceFromHeader = request.headers["x-client-nonce"];
+        const rawNonce = nonceFromBody ?? nonceFromHeader;
+        const clientNonce = Array.isArray(rawNonce) ? rawNonce[0] : rawNonce;
         if (!clientNonce) {
           reply.code(400);
           return { error: "Missing client nonce" };

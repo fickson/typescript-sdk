@@ -11,6 +11,7 @@ export declare class SQLiteStorage extends BaseMemoryStorage {
     private connectionPromise;
     constructor(config: SQLiteConfig);
     connect(): Promise<void>;
+    private loadDatabaseDriver;
     private ensureTableExists;
     private ensureConnected;
     add(sessionId: string, message: MemoryMessage): Promise<void>;

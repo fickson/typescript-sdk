@@ -66,10 +66,13 @@ export interface HandshakeWelcome {
     agentId: string;
     agentNonce: string;
     signatureC: string;
+    agentPublicKey: string;
     credentials: string[];
 }
 export interface HandshakeAuth {
     signatureA: string;
+    clientPublicKey: string;
+    clientNonce?: string;
 }
 export interface VerifyAgentRequest {
     sekuireId: string;

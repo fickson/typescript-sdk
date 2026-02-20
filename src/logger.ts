@@ -1,4 +1,6 @@
 import axios, { type AxiosInstance } from "axios";
+import fs from "node:fs";
+import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
 
 export type EventType =
@@ -244,7 +246,10 @@ export class SekuireLogger {
 
   private writeFallbackToFile(events: EventLog[]): void {
     try {
-      const fs = require("fs");
+      const dir = path.dirname(this.config.fallbackFilePath);
+      if (dir && dir !== ".") {
+        fs.mkdirSync(dir, { recursive: true });
+      }
       const data = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
       fs.appendFileSync(this.config.fallbackFilePath, data, "utf-8");
     } catch {

@@ -6,12 +6,14 @@ var fs$1 = require('fs/promises');
 var path = require('path');
 var nacl$1 = require('tweetnacl');
 var blake3 = require('blake3');
+var fs$2 = require('node:fs');
+var path$1 = require('node:path');
 var uuid = require('uuid');
 var EventSource = require('eventsource');
 var crypto = require('crypto');
 var yaml = require('js-yaml');
-var fs$2 = require('node:fs/promises');
-var path$1 = require('node:path');
+var fs$3 = require('node:fs/promises');
+var node_module = require('node:module');
 var https = require('https');
 var http = require('http');
 var url = require('url');
@@ -39,10 +41,10 @@ var fs__namespace = /*#__PURE__*/_interopNamespaceDefault(fs);
 var path__namespace = /*#__PURE__*/_interopNamespaceDefault(path);
 var nacl__namespace = /*#__PURE__*/_interopNamespaceDefault(nacl$1);
 var blake3__namespace = /*#__PURE__*/_interopNamespaceDefault(blake3);
+var path__namespace$1 = /*#__PURE__*/_interopNamespaceDefault(path$1);
 var crypto__namespace = /*#__PURE__*/_interopNamespaceDefault(crypto);
 var yaml__namespace = /*#__PURE__*/_interopNamespaceDefault(yaml);
-var fs__namespace$1 = /*#__PURE__*/_interopNamespaceDefault(fs$2);
-var path__namespace$1 = /*#__PURE__*/_interopNamespaceDefault(path$1);
+var fs__namespace$1 = /*#__PURE__*/_interopNamespaceDefault(fs$3);
 var https__namespace = /*#__PURE__*/_interopNamespaceDefault(https);
 var http__namespace = /*#__PURE__*/_interopNamespaceDefault(http);
 var os__namespace = /*#__PURE__*/_interopNamespaceDefault(os);
@@ -1539,7 +1541,14 @@ class SekuireCrypto {
         try {
             const privateKey = SekuireCrypto.hexToBytes(privateKeyHex);
             const messageBytes = typeof message === "string" ? Buffer.from(message, "utf8") : message;
-            const signature = nacl.sign.detached(messageBytes, privateKey);
+            // Accept both 32-byte Ed25519 seeds (CLI-generated) and 64-byte nacl secret keys.
+            const secretKey = privateKey.length === 32
+                ? nacl.sign.keyPair.fromSeed(privateKey).secretKey
+                : privateKey;
+            if (secretKey.length !== 64) {
+                throw new CryptoError(`Invalid private key length: expected 32-byte seed or 64-byte secret key, got ${privateKey.length} bytes`);
+            }
+            const signature = nacl.sign.detached(messageBytes, secretKey);
             return Buffer.from(signature).toString("hex");
         }
         catch (error) {
@@ -1673,13 +1682,14 @@ class SekuireCrypto {
         }
     }
     /**
-     * Validate Ed25519 private key format (64 bytes)
+     * Validate Ed25519 private key format (32-byte seed or 64-byte secret key)
      */
     static isValidPrivateKey(hex) {
         if (!SekuireCrypto.isValidHex(hex))
             return false;
         try {
-            return SekuireCrypto.hexToBytes(hex).length === 64;
+            const len = SekuireCrypto.hexToBytes(hex).length;
+            return len === 32 || len === 64;
         }
         catch {
             return false;
@@ -1950,9 +1960,12 @@ class SekuireLogger {
     }
     writeFallbackToFile(events) {
         try {
-            const fs = require("fs");
+            const dir = path$1.dirname(this.config.fallbackFilePath);
+            if (dir && dir !== ".") {
+                fs$2.mkdirSync(dir, { recursive: true });
+            }
             const data = events.map((e) => JSON.stringify(e)).join("\n") + "\n";
-            fs.appendFileSync(this.config.fallbackFilePath, data, "utf-8");
+            fs$2.appendFileSync(this.config.fallbackFilePath, data, "utf-8");
         }
         catch {
             for (const event of events) {
@@ -2149,29 +2162,15 @@ class PolicyEnforcer {
             if (pattern === toolName) {
                 return true;
             }
-            // Category patterns: "files:*" => matches "file_read", "file_write", etc
-            // Check this BEFORE wildcard matching since it contains both : and *
+            // Category patterns: "files:*" or "files:[read,write]"
             if (pattern.includes(":")) {
                 const [category, ops] = pattern.split(":", 2);
-                const categoryPrefix = this.getCategoryPrefix(category);
-                if (ops === "*") {
-                    // Match all tools in category
-                    const matches = toolName.startsWith(categoryPrefix + "_");
-                    return matches;
-                }
-                if (ops.startsWith("[") && ops.endsWith("]")) {
-                    // Match specific operations: "files:[read,write]"
-                    const operations = ops.slice(1, -1).split(",").map(s => s.trim());
-                    const matches = operations.some(op => toolName === `${categoryPrefix}_${op}`);
-                    console.log(`[DEBUG]   ${matches ? '✓' : '✗'} Category ops: ${operations.join(",")}`);
-                    return matches;
-                }
+                return this.matchesCategoryPattern(category, ops, toolName);
             }
             // Pattern matching: "file_*", etc (simple wildcards without :)
             if (pattern.includes("*")) {
                 const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
-                const matches = regex.test(toolName);
-                return matches;
+                return regex.test(toolName);
             }
             return false;
         });
@@ -2179,15 +2178,90 @@ class PolicyEnforcer {
             this.throw("tool.not_allowed", `Tool ${toolName} is not in the allowlist`);
         }
     }
-    getCategoryPrefix(category) {
-        const prefixMap = {
-            files: "file",
-            directories: "dir",
-            network: "http",
-            data: "json",
-            system: "env",
-        };
-        return prefixMap[category] || category;
+    matchesCategoryPattern(category, ops, toolName) {
+        const normalizedCategory = category.trim().toLowerCase();
+        if (ops === "*") {
+            return this.toolMatchesCategory(normalizedCategory, toolName);
+        }
+        if (ops.startsWith("[") && ops.endsWith("]")) {
+            const operations = ops
+                .slice(1, -1)
+                .split(",")
+                .map((op) => op.trim())
+                .filter((op) => op.length > 0);
+            return operations.some((op) => this.toolMatchesCategoryOperation(normalizedCategory, op, toolName));
+        }
+        return this.toolMatchesCategoryOperation(normalizedCategory, ops.trim(), toolName);
+    }
+    toolMatchesCategory(category, toolName) {
+        switch (category) {
+            case "files":
+                return toolName.startsWith("file_");
+            case "directories":
+                return toolName.startsWith("dir_");
+            case "network":
+                return (toolName.startsWith("http_") ||
+                    toolName === "download_file" ||
+                    toolName === "dns_lookup" ||
+                    toolName === "ping" ||
+                    toolName === "web_search");
+            case "data":
+                return (toolName.startsWith("json_") ||
+                    toolName.startsWith("csv_") ||
+                    toolName.startsWith("yaml_") ||
+                    toolName.startsWith("xml_") ||
+                    toolName.startsWith("base64_") ||
+                    toolName === "hash");
+            case "system":
+                return (toolName.startsWith("env_") ||
+                    toolName === "get_cwd" ||
+                    toolName === "get_platform");
+            default:
+                return toolName.startsWith(`${category}_`);
+        }
+    }
+    toolMatchesCategoryOperation(category, operation, toolName) {
+        const op = operation.trim().toLowerCase();
+        if (!op)
+            return false;
+        switch (category) {
+            case "files":
+                return toolName === `file_${op}`;
+            case "directories":
+                return toolName === `dir_${op}`;
+            case "network":
+                if (op === "search")
+                    return toolName === "web_search";
+                if (op === "download")
+                    return toolName === "download_file";
+                if (op === "dns")
+                    return toolName === "dns_lookup";
+                return toolName === `http_${op}` || toolName === op;
+            case "data":
+                if (op === "hash")
+                    return toolName === "hash";
+                if (op.startsWith("json_"))
+                    return toolName === op;
+                if (op.startsWith("csv_"))
+                    return toolName === op;
+                if (op.startsWith("yaml_"))
+                    return toolName === op;
+                if (op.startsWith("xml_"))
+                    return toolName === op;
+                if (op.startsWith("base64_"))
+                    return toolName === op;
+                return toolName === `json_${op}` || toolName === op;
+            case "system":
+                if (op === "cwd")
+                    return toolName === "get_cwd";
+                if (op === "platform")
+                    return toolName === "get_platform";
+                if (op === "get" || op === "set")
+                    return toolName === `env_${op}`;
+                return toolName === `env_${op}` || toolName === op;
+            default:
+                return toolName === `${category}_${op}` || toolName === op;
+        }
     }
     enforceModel(model) {
         const models = this.policy.content?.agent?.models;
@@ -4436,10 +4510,14 @@ class SekuireClient {
                 throw new ProtocolError(`Agent ID mismatch. Expected ${expectedAgentId}, got ${welcome.agentId}`);
             }
             // 4. Verify signature C (Agent signed our nonce)
-            await this.verifyAgentSignature(clientNonce, welcome.agentId, welcome.signatureC);
+            await this.verifyAgentSignature(clientNonce, welcome.agentId, welcome.signatureC, welcome.agentPublicKey);
             // 5. Sign agent nonce and send AUTH
             const signatureA = SekuireCrypto.sign(welcome.agentNonce, this.keyPair.privateKey);
-            const auth = { signatureA };
+            const auth = {
+                signatureA,
+                clientPublicKey: this.keyPair.publicKey,
+                clientNonce,
+            };
             await this.httpClient.post(`${agentUrl}/sekuire/auth`, auth);
             return {
                 agentId: welcome.agentId,
@@ -4459,10 +4537,15 @@ class SekuireClient {
     /**
      * Verify an agent's signature
      */
-    async verifyAgentSignature(clientNonce, agentId, signatureHex) {
+    async verifyAgentSignature(clientNonce, agentId, signatureHex, directPublicKey) {
         try {
-            // Fetch agent's public key from registry
-            const publicKey = await this.fetchAgentPublicKey(agentId);
+            let publicKey = directPublicKey;
+            if (publicKey && !SekuireCrypto.isValidPublicKey(publicKey)) {
+                throw new CryptoError("Invalid public key format from handshake response");
+            }
+            if (!publicKey) {
+                publicKey = await this.fetchAgentPublicKey(agentId);
+            }
             // Verify the signature
             const isValid = SekuireCrypto.verify(clientNonce, signatureHex, publicKey);
             if (!isValid) {
@@ -5436,19 +5519,19 @@ const llm = {
     openai: (config) => {
         return OpenAIProvider.create({
             ...config,
-            model: config.model || 'gpt-4.1',
+            model: config.model || 'gpt-5',
         });
     },
     anthropic: (config) => {
         return AnthropicProvider.create({
             ...config,
-            model: config.model || 'claude-sonnet-4-20250514',
+            model: config.model || 'claude-sonnet-4-5-20250929',
         });
     },
     google: (config) => {
         return GoogleProvider.create({
             ...config,
-            model: config.model || 'gemini-3-pro-preview',
+            model: config.model || 'gemini-3.1-pro-preview-06-17',
         });
     },
     ollama: (config) => {
@@ -5724,8 +5807,13 @@ class SQLiteStorage extends BaseMemoryStorage {
         if (this.connectionPromise && !this._connected)
             return this.connectionPromise;
         try {
-            const Database = (await import('better-sqlite3')).default;
-            this.db = new Database(this.config.filename, {
+            const filename = this.config.filename;
+            const dirname = path$1.dirname(filename);
+            if (dirname && dirname !== '.') {
+                await fs$3.mkdir(dirname, { recursive: true });
+            }
+            const Database = await this.loadDatabaseDriver();
+            this.db = new Database(filename, {
                 readonly: this.config.readonly || false,
             });
             this.db.pragma('journal_mode = WAL');
@@ -5735,6 +5823,22 @@ class SQLiteStorage extends BaseMemoryStorage {
         catch (error) {
             this.connectionPromise = null;
             throw new Error(`Failed to initialize SQLite: ${error}`);
+        }
+    }
+    async loadDatabaseDriver() {
+        try {
+            const requireFromCwd = node_module.createRequire(path$1.join(process.cwd(), 'package.json'));
+            const loaded = requireFromCwd('better-sqlite3');
+            return loaded.default ?? loaded;
+        }
+        catch {
+            try {
+                const loaded = await import('better-sqlite3');
+                return loaded.default ?? loaded;
+            }
+            catch (error) {
+                throw new Error(`Unable to load better-sqlite3. Install it in your agent project and rebuild native modules for the active Node version. ${error}`);
+            }
         }
     }
     ensureTableExists() {
@@ -5804,6 +5908,94 @@ class SQLiteStorage extends BaseMemoryStorage {
     async disconnect() {
         if (this._connected && this.db) {
             this.db.close();
+            this._connected = false;
+            this.connectionPromise = null;
+        }
+    }
+}
+
+class FileStorage extends BaseMemoryStorage {
+    constructor(config) {
+        super();
+        this.connectionPromise = null;
+        this.data = {};
+        this.config = config;
+        this.connectionPromise = this.connect();
+    }
+    async connect() {
+        if (this._connected)
+            return;
+        if (this.connectionPromise && !this._connected)
+            return this.connectionPromise;
+        this.connectionPromise = this.initialize();
+        return this.connectionPromise;
+    }
+    async initialize() {
+        try {
+            const filename = this.config.path?.trim();
+            if (!filename) {
+                throw new Error('File memory path is required');
+            }
+            const dir = path$1.dirname(filename);
+            if (dir && dir !== '.') {
+                await fs$3.mkdir(dir, { recursive: true });
+            }
+            try {
+                await fs$3.access(filename);
+            }
+            catch {
+                await fs$3.writeFile(filename, '{}', 'utf-8');
+            }
+            const content = await fs$3.readFile(filename, 'utf-8');
+            this.data = content.trim() ? JSON.parse(content) : {};
+            this._connected = true;
+        }
+        catch (error) {
+            this.connectionPromise = null;
+            throw new Error(`Failed to initialize file memory: ${error}`);
+        }
+    }
+    async ensureConnected() {
+        if (!this._connected) {
+            await this.connect();
+        }
+    }
+    async flush() {
+        await fs$3.writeFile(this.config.path, JSON.stringify(this.data, null, 2), 'utf-8');
+    }
+    async add(sessionId, message) {
+        await this.ensureConnected();
+        if (!this.data[sessionId]) {
+            this.data[sessionId] = [];
+        }
+        this.data[sessionId].push(message);
+        await this.flush();
+    }
+    async get(sessionId, limit) {
+        await this.ensureConnected();
+        const messages = this.data[sessionId] || [];
+        if (limit) {
+            return messages.slice(-limit);
+        }
+        return [...messages];
+    }
+    async clear(sessionId) {
+        await this.ensureConnected();
+        this.data[sessionId] = [];
+        await this.flush();
+    }
+    async delete(sessionId) {
+        await this.ensureConnected();
+        delete this.data[sessionId];
+        await this.flush();
+    }
+    async exists(sessionId) {
+        await this.ensureConnected();
+        return Array.isArray(this.data[sessionId]) && this.data[sessionId].length > 0;
+    }
+    async disconnect() {
+        if (this._connected) {
+            await this.flush();
             this._connected = false;
             this.connectionPromise = null;
         }
@@ -6573,6 +6765,12 @@ registerStorage('sqlite', (config) => {
     }
     return new SQLiteStorage(config.sqlite);
 }, 'Local SQLite database for development and single-node deployments');
+registerStorage('file', (config) => {
+    if (!config.file) {
+        throw new Error('File config required for file memory type');
+    }
+    return new FileStorage(config.file);
+}, 'Local JSON file storage');
 registerStorage('upstash', (config) => {
     if (!config.upstash) {
         throw new Error('Upstash config required for upstash memory type');
@@ -9698,6 +9896,331 @@ catch {
 // Global cache for policy files to prevent repetitive disk I/O
 const policyCache = new Map();
 let ctaShown = false;
+function asObject(value) {
+    return value !== null && typeof value === 'object' ? value : undefined;
+}
+function readString(source, keys) {
+    if (!source)
+        return undefined;
+    for (const key of keys) {
+        const value = source[key];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value.trim();
+        }
+    }
+    return undefined;
+}
+function readNumber(source, keys) {
+    if (!source)
+        return undefined;
+    for (const key of keys) {
+        const value = source[key];
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return value;
+        }
+        if (typeof value === 'string' && value.trim().length > 0) {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) {
+                return parsed;
+            }
+        }
+    }
+    return undefined;
+}
+function readBoolean(source, keys) {
+    if (!source)
+        return undefined;
+    for (const key of keys) {
+        const value = source[key];
+        if (typeof value === 'boolean') {
+            return value;
+        }
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === 'true')
+                return true;
+            if (normalized === 'false')
+                return false;
+        }
+    }
+    return undefined;
+}
+function readStringArray(source) {
+    if (!Array.isArray(source))
+        return [];
+    return source
+        .filter((item) => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+}
+function dedupeCaseInsensitive(values) {
+    const seen = new Set();
+    const result = [];
+    for (const value of values) {
+        const normalized = value.toLowerCase();
+        if (seen.has(normalized))
+            continue;
+        seen.add(normalized);
+        result.push(value);
+    }
+    return result;
+}
+function normalizeDomainPatterns(values) {
+    const normalized = values
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0)
+        .map((entry) => {
+        if (entry.startsWith('*.')) {
+            return entry;
+        }
+        try {
+            return new URL(entry).hostname;
+        }
+        catch {
+            const withoutScheme = entry.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+            return withoutScheme.split('/')[0] || withoutScheme;
+        }
+    })
+        .filter((entry) => entry.length > 0);
+    return dedupeCaseInsensitive(normalized);
+}
+function buildToolsPolicy(agentConfig) {
+    const toolsetAllow = (agentConfig.toolsets?.allowed_tools || [])
+        .map((entry) => entry?.name?.trim())
+        .filter((entry) => !!entry);
+    const legacyAllow = readStringArray(agentConfig.allowed_tools);
+    const allowedTools = dedupeCaseInsensitive([...toolsetAllow, ...legacyAllow]).map((name) => ({
+        name,
+    }));
+    const toolsetBlocked = readStringArray(agentConfig.toolsets?.blocked_tools);
+    const legacyBlocked = readStringArray(agentConfig.blocked_tools);
+    const blockedTools = dedupeCaseInsensitive([...toolsetBlocked, ...legacyBlocked]);
+    return {
+        allowed_tools: allowedTools,
+        blocked_tools: blockedTools,
+    };
+}
+function buildPermissionsPolicy(config, agentConfig) {
+    const rootNetwork = config.permissions?.network;
+    const rootFilesystem = config.permissions?.filesystem;
+    const rootApi = config.permissions?.api;
+    const legacyNetwork = agentConfig.network;
+    const legacyFs = agentConfig.filesystem;
+    const allowedDomains = normalizeDomainPatterns([
+        ...readStringArray(rootNetwork?.allowed_domains),
+        ...readStringArray(legacyNetwork?.allow),
+    ]);
+    const blockedDomains = normalizeDomainPatterns([
+        ...readStringArray(rootNetwork?.blocked_domains),
+        ...readStringArray(legacyNetwork?.block),
+    ]);
+    const allowedPaths = dedupeCaseInsensitive([
+        ...readStringArray(rootFilesystem?.allowed_paths),
+        ...readStringArray(legacyFs?.allow_read),
+        ...readStringArray(legacyFs?.allow_write),
+    ]);
+    const blockedPaths = dedupeCaseInsensitive([
+        ...readStringArray(rootFilesystem?.blocked_paths),
+        ...readStringArray(legacyFs?.block_all),
+    ]);
+    const allowedExtensions = dedupeCaseInsensitive([
+        ...readStringArray(rootFilesystem?.allowed_extensions),
+        ...readStringArray(legacyFs?.allowed_extensions),
+    ]);
+    const hasNetworkConfig = !!rootNetwork ||
+        !!legacyNetwork ||
+        allowedDomains.length > 0 ||
+        blockedDomains.length > 0;
+    const networkEnabled = rootNetwork?.enabled ?? legacyNetwork?.enabled;
+    const networkRequireTls = rootNetwork?.require_tls ?? legacyNetwork?.require_tls ?? false;
+    const hasFilesystemConfig = !!rootFilesystem ||
+        !!legacyFs ||
+        allowedPaths.length > 0 ||
+        blockedPaths.length > 0 ||
+        allowedExtensions.length > 0;
+    const filesystemEnabled = rootFilesystem?.enabled ?? legacyFs?.enabled;
+    const permissions = {};
+    if (hasNetworkConfig) {
+        permissions.network = {
+            enabled: networkEnabled ?? true,
+            require_tls: networkRequireTls,
+            ...(allowedDomains.length > 0 ? { allowed_domains: allowedDomains } : {}),
+            ...(blockedDomains.length > 0 ? { blocked_domains: blockedDomains } : {}),
+        };
+    }
+    if (hasFilesystemConfig) {
+        permissions.filesystem = {
+            enabled: filesystemEnabled ?? true,
+            ...(allowedPaths.length > 0 ? { allowed_paths: allowedPaths } : {}),
+            ...(blockedPaths.length > 0 ? { blocked_paths: blockedPaths } : {}),
+            ...(allowedExtensions.length > 0 ? { allowed_extensions: allowedExtensions } : {}),
+        };
+    }
+    if (rootApi) {
+        permissions.api = rootApi;
+    }
+    return permissions;
+}
+function buildConfigBackedPolicy(config, agentConfig) {
+    return {
+        policy_id: `${config.project.name}-policy`,
+        workspace_id: 'local',
+        version: config.project.version || '1.0.0',
+        status: 'active',
+        hash: 'config-based',
+        content: {
+            agent: {
+                models: agentConfig.models || {},
+            },
+            tools: buildToolsPolicy(agentConfig),
+            permissions: buildPermissionsPolicy(config, agentConfig),
+            rate_limits: config.rate_limits || {},
+        },
+    };
+}
+function normalizeMemoryFactoryConfig(memoryConfig) {
+    if (!memoryConfig)
+        return undefined;
+    const cfg = asObject(memoryConfig.config);
+    const type = memoryConfig.type || 'in-memory';
+    const sqlite = memoryConfig.sqlite ||
+        (() => {
+            const filename = readString(cfg, ['filename']);
+            if (!filename)
+                return undefined;
+            return {
+                filename,
+                tableName: readString(cfg, ['tableName', 'table_name']),
+                readonly: readBoolean(cfg, ['readonly']),
+            };
+        })();
+    const file = memoryConfig.file ||
+        (() => {
+            const filePath = readString(cfg, ['path']);
+            if (!filePath)
+                return undefined;
+            return { path: filePath };
+        })();
+    const redis = memoryConfig.redis ||
+        (() => {
+            const url = readString(cfg, ['url']);
+            const host = readString(cfg, ['host']);
+            const port = readNumber(cfg, ['port']);
+            if (!url && !host && port === undefined)
+                return undefined;
+            return {
+                url,
+                host,
+                port,
+                password: readString(cfg, ['password']),
+                db: readNumber(cfg, ['db']),
+                keyPrefix: readString(cfg, ['keyPrefix']),
+            };
+        })();
+    const postgres = memoryConfig.postgres ||
+        (() => {
+            const connectionString = readString(cfg, ['connectionString', 'connection_string', 'url']);
+            const host = readString(cfg, ['host']);
+            const port = readNumber(cfg, ['port']);
+            if (!connectionString && !host && port === undefined)
+                return undefined;
+            return {
+                connectionString,
+                host,
+                port,
+                database: readString(cfg, ['database']),
+                user: readString(cfg, ['user']),
+                password: readString(cfg, ['password']),
+                tableName: readString(cfg, ['tableName', 'table_name']),
+            };
+        })();
+    const upstash = memoryConfig.upstash ||
+        (() => {
+            const url = readString(cfg, ['url']);
+            const token = readString(cfg, ['token']);
+            if (!url || !token)
+                return undefined;
+            return {
+                url,
+                token,
+                keyPrefix: readString(cfg, ['keyPrefix']),
+            };
+        })();
+    const cloudflareKV = memoryConfig.cloudflareKV ||
+        (() => {
+            const namespaceId = readString(cfg, ['namespaceId', 'namespace_id']);
+            const accountId = readString(cfg, ['accountId', 'account_id']);
+            const apiToken = readString(cfg, ['apiToken', 'api_token']);
+            if (!namespaceId && !accountId && !apiToken)
+                return undefined;
+            return {
+                namespaceId,
+                accountId,
+                apiToken,
+                keyPrefix: readString(cfg, ['keyPrefix']),
+            };
+        })();
+    const cloudflareD1 = memoryConfig.cloudflareD1 ||
+        (() => {
+            const databaseId = readString(cfg, ['databaseId', 'database_id']);
+            const accountId = readString(cfg, ['accountId', 'account_id']);
+            const apiToken = readString(cfg, ['apiToken', 'api_token']);
+            if (!databaseId && !accountId && !apiToken)
+                return undefined;
+            return {
+                databaseId,
+                accountId,
+                apiToken,
+                tableName: readString(cfg, ['tableName', 'table_name']),
+            };
+        })();
+    const dynamodb = memoryConfig.dynamodb ||
+        (() => {
+            const tableName = readString(cfg, ['tableName', 'table_name']);
+            if (!tableName)
+                return undefined;
+            return {
+                tableName,
+                region: readString(cfg, ['region']),
+                endpoint: readString(cfg, ['endpoint']),
+                createTable: readBoolean(cfg, ['createTable', 'create_table']),
+            };
+        })();
+    const turso = memoryConfig.turso ||
+        (() => {
+            const url = readString(cfg, ['url']);
+            if (!url)
+                return undefined;
+            return {
+                url,
+                authToken: readString(cfg, ['authToken', 'auth_token']),
+                tableName: readString(cfg, ['tableName', 'table_name']),
+            };
+        })();
+    const convex = memoryConfig.convex ||
+        (() => {
+            const url = readString(cfg, ['url']);
+            if (!url)
+                return undefined;
+            return {
+                url,
+                adminKey: readString(cfg, ['adminKey', 'admin_key']),
+            };
+        })();
+    return {
+        type,
+        redis,
+        postgres,
+        sqlite,
+        file,
+        upstash,
+        cloudflareKV,
+        cloudflareD1,
+        dynamodb,
+        turso,
+        convex,
+    };
+}
 /**
  * Sekuire Agent - Config-first AI agent
  */
@@ -10040,16 +10563,14 @@ async function getAgent(agentName, overrides, configPath) {
     });
     // Create memory storage
     let memory;
-    if (agentConfig.memory) {
-        memory = createMemoryStorage({
-            type: agentConfig.memory.type || 'in-memory',
-            redis: agentConfig.memory.redis,
-            postgres: agentConfig.memory.postgres,
-            sqlite: agentConfig.memory.sqlite || agentConfig.memory.config,
-        });
-    }
-    else if (overrides?.memory) {
+    if (overrides?.memory) {
         memory = overrides.memory;
+    }
+    else {
+        const memoryFactoryConfig = normalizeMemoryFactoryConfig(agentConfig.memory);
+        if (memoryFactoryConfig) {
+            memory = createMemoryStorage(memoryFactoryConfig);
+        }
     }
     // Get memory config
     const maxHistoryMessages = agentConfig.memory?.max_messages || 10;
@@ -10070,22 +10591,8 @@ async function getAgent(agentName, overrides, configPath) {
             }
         }
         catch (fileError) {
-            // Option 2: Build policy from sekuire.yml config (NEW - correct way)
-            activePolicy = {
-                policy_id: `${config.project.name}-policy`,
-                workspace_id: 'local',
-                version: config.project.version || '1.0.0',
-                status: 'active',
-                hash: 'config-based',
-                content: {
-                    agent: {
-                        models: agentConfig.models || {}
-                    },
-                    tools: agentConfig.toolsets || {},
-                    permissions: config.permissions || {},
-                    rate_limits: config.rate_limits || {}
-                }
-            };
+            // Option 2: Build policy from sekuire.yml config.
+            activePolicy = buildConfigBackedPolicy(config, agentConfig);
         }
         policyEnforcer = new PolicyEnforcer(activePolicy);
     }
@@ -10112,15 +10619,16 @@ async function getAgent(agentName, overrides, configPath) {
  * Create LLM provider from configuration
  */
 async function createLLMProviderFromConfig(llmConfig) {
-    // Get API key from environment
+    const provider = llmConfig.provider.toLowerCase();
+    const requiresApiKey = provider !== 'ollama';
     const apiKey = process.env[llmConfig.api_key_env];
-    if (!apiKey) {
+    if (requiresApiKey && !apiKey) {
         throw new Error(`API key not found: ${llmConfig.api_key_env}. ` +
             `Please set this environment variable.`);
     }
     // Create provider
     return createLLMProvider(llmConfig.provider, {
-        apiKey,
+        apiKey: apiKey || '',
         model: llmConfig.model,
         baseUrl: llmConfig.base_url,
         temperature: llmConfig.temperature,
@@ -10202,6 +10710,15 @@ class SekuireServer {
     constructor(agentId, keyPair) {
         this.agentId = agentId;
         this.keyPair = keyPair;
+        this.pendingHandshakes = new Map();
+    }
+    purgeExpiredHandshakes() {
+        const now = Date.now();
+        for (const [clientNonce, pending] of this.pendingHandshakes) {
+            if (now - pending.createdAt > SekuireServer.HANDSHAKE_TTL_MS) {
+                this.pendingHandshakes.delete(clientNonce);
+            }
+        }
     }
     /**
      * Handle the HELLO handshake message
@@ -10214,6 +10731,11 @@ class SekuireServer {
             }
             // Generate agent nonce
             const agentNonce = SekuireCrypto.generateNonce();
+            this.purgeExpiredHandshakes();
+            this.pendingHandshakes.set(hello.clientNonce, {
+                agentNonce,
+                createdAt: Date.now(),
+            });
             // Sign the client nonce
             const signatureC = SekuireCrypto.sign(hello.clientNonce, this.keyPair.privateKey);
             // Return welcome message
@@ -10221,6 +10743,7 @@ class SekuireServer {
                 agentId: this.agentId,
                 agentNonce,
                 signatureC,
+                agentPublicKey: this.keyPair.publicKey,
                 credentials: [], // TODO: Add verifiable credentials support
             };
         }
@@ -10236,17 +10759,31 @@ class SekuireServer {
      */
     async handleAuth(auth, clientNonce) {
         try {
-            // In a real implementation, we would:
-            // 1. Extract client public key from some registry or JWT
-            // 2. Verify the signature of agentNonce
-            // 3. Complete mutual authentication
-            // For now, just validate the signature format
             if (!SekuireCrypto.isValidHex(auth.signatureA)) {
                 throw new ProtocolError("Invalid signature format");
             }
-            // TODO: Implement full client verification
-            // This would involve looking up the client's public key
-            // and verifying they signed our agent nonce correctly
+            if (!SekuireCrypto.isValidNonce(clientNonce)) {
+                throw new ProtocolError("Invalid client nonce format");
+            }
+            if (auth.clientNonce && auth.clientNonce !== clientNonce) {
+                throw new ProtocolError("Client nonce mismatch");
+            }
+            if (!auth.clientPublicKey) {
+                throw new ProtocolError("Missing client public key");
+            }
+            if (!SekuireCrypto.isValidPublicKey(auth.clientPublicKey)) {
+                throw new ProtocolError("Invalid client public key format");
+            }
+            this.purgeExpiredHandshakes();
+            const pending = this.pendingHandshakes.get(clientNonce);
+            if (!pending) {
+                throw new ProtocolError("Handshake not found or expired");
+            }
+            const verified = SekuireCrypto.verify(pending.agentNonce, auth.signatureA, auth.clientPublicKey);
+            if (!verified) {
+                throw new ProtocolError("Client signature verification failed");
+            }
+            this.pendingHandshakes.delete(clientNonce);
         }
         catch (error) {
             if (error instanceof ProtocolError || error instanceof CryptoError) {
@@ -10276,6 +10813,7 @@ class SekuireServer {
         return { received: true };
     }
 }
+SekuireServer.HANDSHAKE_TTL_MS = 5 * 60 * 1000;
 /**
  * Express.js middleware for Sekuire protocol
  */
@@ -10290,8 +10828,10 @@ function createSekuireExpressMiddleware(server) {
                     return res.json(result);
                 }
                 else if (req.path === "/sekuire/auth" && req.method === "POST") {
-                    // Store client nonce from previous step (in real implementation, use session/storage)
-                    const clientNonce = req.headers["x-client-nonce"];
+                    const nonceFromBody = req.body?.clientNonce;
+                    const nonceFromHeader = req.headers["x-client-nonce"];
+                    const rawNonce = nonceFromBody ?? nonceFromHeader;
+                    const clientNonce = Array.isArray(rawNonce) ? rawNonce[0] : rawNonce;
                     if (!clientNonce) {
                         return res.status(400).json({ error: "Missing client nonce" });
                     }
@@ -10341,7 +10881,10 @@ function createSekuireFastifyPlugin(server) {
         });
         fastify.post("/sekuire/auth", async (request, reply) => {
             try {
-                const clientNonce = request.headers["x-client-nonce"];
+                const nonceFromBody = request.body?.clientNonce;
+                const nonceFromHeader = request.headers["x-client-nonce"];
+                const rawNonce = nonceFromBody ?? nonceFromHeader;
+                const clientNonce = Array.isArray(rawNonce) ? rawNonce[0] : rawNonce;
                 if (!clientNonce) {
                     reply.code(400);
                     return { error: "Missing client nonce" };

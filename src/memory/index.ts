@@ -3,6 +3,7 @@ export * from './in-memory';
 export * from './postgres';
 export * from './redis';
 export * from './sqlite';
+export * from './file';
 export * from './upstash';
 export * from './cloudflare-kv';
 export * from './cloudflare-d1';
@@ -16,6 +17,7 @@ import { InMemoryStorage } from './in-memory';
 import { type PostgresConfig, PostgresStorage } from './postgres';
 import { type RedisConfig, RedisStorage } from './redis';
 import { type SQLiteConfig, SQLiteStorage } from './sqlite';
+import { type FileStorageConfig, FileStorage } from './file';
 import { type UpstashConfig, UpstashStorage } from './upstash';
 import { type CloudflareKVConfig, CloudflareKVStorage } from './cloudflare-kv';
 import { type CloudflareD1Config, CloudflareD1Storage } from './cloudflare-d1';
@@ -36,6 +38,7 @@ export type BuiltInMemoryType =
   | 'redis'
   | 'postgres'
   | 'sqlite'
+  | 'file'
   | 'upstash'
   | 'cloudflare-kv'
   | 'cloudflare-d1'
@@ -50,6 +53,7 @@ export interface MemoryFactoryConfig {
   redis?: RedisConfig;
   postgres?: PostgresConfig;
   sqlite?: SQLiteConfig;
+  file?: FileStorageConfig;
   upstash?: UpstashConfig;
   cloudflareKV?: CloudflareKVConfig;
   cloudflareD1?: CloudflareD1Config;
@@ -94,6 +98,17 @@ registerStorage(
     return new SQLiteStorage(config.sqlite);
   },
   'Local SQLite database for development and single-node deployments'
+);
+
+registerStorage(
+  'file',
+  (config: MemoryFactoryConfig) => {
+    if (!config.file) {
+      throw new Error('File config required for file memory type');
+    }
+    return new FileStorage(config.file);
+  },
+  'Local JSON file storage'
 );
 
 registerStorage(

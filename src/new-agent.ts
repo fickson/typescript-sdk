@@ -5,11 +5,12 @@ import {
     loadSystemPrompt,
     loadTools,
     type AgentConfig,
+    type SekuireConfig,
     type ToolDefinition
 } from './config/loader';
 import { createLLMProvider } from './llm';
 import type { ChatOptions, LLMProvider, Message } from './llm/types';
-import { createMemoryStorage, type MemoryMessage, type MemoryStorage } from './memory';
+import { createMemoryStorage, type MemoryFactoryConfig, type MemoryMessage, type MemoryStorage } from './memory';
 import type { ActivePolicy } from './policy';
 import { PolicyEnforcer } from './policy-enforcer';
 import { getTracer } from './telemetry';
@@ -26,6 +27,366 @@ try {
 const policyCache = new Map<string, ActivePolicy>();
 
 let ctaShown = false;
+
+type JsonRecord = Record<string, unknown>;
+
+function asObject(value: unknown): JsonRecord | undefined {
+  return value !== null && typeof value === 'object' ? (value as JsonRecord) : undefined;
+}
+
+function readString(source: JsonRecord | undefined, keys: string[]): string | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function readNumber(source: JsonRecord | undefined, keys: string[]): number | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+}
+
+function readBoolean(source: JsonRecord | undefined, keys: string[]): boolean | undefined {
+  if (!source) return undefined;
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+    }
+  }
+  return undefined;
+}
+
+function readStringArray(source: unknown): string[] {
+  if (!Array.isArray(source)) return [];
+  return source
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function dedupeCaseInsensitive(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    const normalized = value.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(value);
+  }
+  return result;
+}
+
+function normalizeDomainPatterns(values: string[]): string[] {
+  const normalized = values
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((entry) => {
+      if (entry.startsWith('*.')) {
+        return entry;
+      }
+
+      try {
+        return new URL(entry).hostname;
+      } catch {
+        const withoutScheme = entry.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '');
+        return withoutScheme.split('/')[0] || withoutScheme;
+      }
+    })
+    .filter((entry) => entry.length > 0);
+
+  return dedupeCaseInsensitive(normalized);
+}
+
+function buildToolsPolicy(agentConfig: AgentConfig): {
+  allowed_tools: Array<{ name: string; description?: string }>;
+  blocked_tools: string[];
+} {
+  const toolsetAllow = (agentConfig.toolsets?.allowed_tools || [])
+    .map((entry) => entry?.name?.trim())
+    .filter((entry): entry is string => !!entry);
+  const legacyAllow = readStringArray(agentConfig.allowed_tools);
+  const allowedTools = dedupeCaseInsensitive([...toolsetAllow, ...legacyAllow]).map((name) => ({
+    name,
+  }));
+
+  const toolsetBlocked = readStringArray(agentConfig.toolsets?.blocked_tools);
+  const legacyBlocked = readStringArray(agentConfig.blocked_tools);
+  const blockedTools = dedupeCaseInsensitive([...toolsetBlocked, ...legacyBlocked]);
+
+  return {
+    allowed_tools: allowedTools,
+    blocked_tools: blockedTools,
+  };
+}
+
+function buildPermissionsPolicy(config: SekuireConfig, agentConfig: AgentConfig): JsonRecord {
+  const rootNetwork = config.permissions?.network;
+  const rootFilesystem = config.permissions?.filesystem;
+  const rootApi = config.permissions?.api;
+
+  const legacyNetwork = agentConfig.network;
+  const legacyFs = agentConfig.filesystem;
+
+  const allowedDomains = normalizeDomainPatterns([
+    ...readStringArray(rootNetwork?.allowed_domains),
+    ...readStringArray(legacyNetwork?.allow),
+  ]);
+  const blockedDomains = normalizeDomainPatterns([
+    ...readStringArray(rootNetwork?.blocked_domains),
+    ...readStringArray(legacyNetwork?.block),
+  ]);
+
+  const allowedPaths = dedupeCaseInsensitive([
+    ...readStringArray(rootFilesystem?.allowed_paths),
+    ...readStringArray(legacyFs?.allow_read),
+    ...readStringArray(legacyFs?.allow_write),
+  ]);
+  const blockedPaths = dedupeCaseInsensitive([
+    ...readStringArray(rootFilesystem?.blocked_paths),
+    ...readStringArray(legacyFs?.block_all),
+  ]);
+  const allowedExtensions = dedupeCaseInsensitive([
+    ...readStringArray(rootFilesystem?.allowed_extensions),
+    ...readStringArray(legacyFs?.allowed_extensions),
+  ]);
+
+  const hasNetworkConfig =
+    !!rootNetwork ||
+    !!legacyNetwork ||
+    allowedDomains.length > 0 ||
+    blockedDomains.length > 0;
+  const networkEnabled = rootNetwork?.enabled ?? legacyNetwork?.enabled;
+  const networkRequireTls = rootNetwork?.require_tls ?? legacyNetwork?.require_tls ?? false;
+
+  const hasFilesystemConfig =
+    !!rootFilesystem ||
+    !!legacyFs ||
+    allowedPaths.length > 0 ||
+    blockedPaths.length > 0 ||
+    allowedExtensions.length > 0;
+  const filesystemEnabled = rootFilesystem?.enabled ?? legacyFs?.enabled;
+
+  const permissions: JsonRecord = {};
+
+  if (hasNetworkConfig) {
+    permissions.network = {
+      enabled: networkEnabled ?? true,
+      require_tls: networkRequireTls,
+      ...(allowedDomains.length > 0 ? { allowed_domains: allowedDomains } : {}),
+      ...(blockedDomains.length > 0 ? { blocked_domains: blockedDomains } : {}),
+    };
+  }
+
+  if (hasFilesystemConfig) {
+    permissions.filesystem = {
+      enabled: filesystemEnabled ?? true,
+      ...(allowedPaths.length > 0 ? { allowed_paths: allowedPaths } : {}),
+      ...(blockedPaths.length > 0 ? { blocked_paths: blockedPaths } : {}),
+      ...(allowedExtensions.length > 0 ? { allowed_extensions: allowedExtensions } : {}),
+    };
+  }
+
+  if (rootApi) {
+    permissions.api = rootApi;
+  }
+
+  return permissions;
+}
+
+function buildConfigBackedPolicy(config: SekuireConfig, agentConfig: AgentConfig): ActivePolicy {
+  return {
+    policy_id: `${config.project.name}-policy`,
+    workspace_id: 'local',
+    version: config.project.version || '1.0.0',
+    status: 'active',
+    hash: 'config-based',
+    content: {
+      agent: {
+        models: agentConfig.models || {},
+      },
+      tools: buildToolsPolicy(agentConfig),
+      permissions: buildPermissionsPolicy(config, agentConfig),
+      rate_limits: config.rate_limits || {},
+    },
+  };
+}
+
+function normalizeMemoryFactoryConfig(memoryConfig?: AgentConfig['memory']): MemoryFactoryConfig | undefined {
+  if (!memoryConfig) return undefined;
+
+  const cfg = asObject(memoryConfig.config);
+  const type = memoryConfig.type || 'in-memory';
+
+  const sqlite =
+    memoryConfig.sqlite ||
+    (() => {
+      const filename = readString(cfg, ['filename']);
+      if (!filename) return undefined;
+      return {
+        filename,
+        tableName: readString(cfg, ['tableName', 'table_name']),
+        readonly: readBoolean(cfg, ['readonly']),
+      };
+    })();
+
+  const file =
+    memoryConfig.file ||
+    (() => {
+      const filePath = readString(cfg, ['path']);
+      if (!filePath) return undefined;
+      return { path: filePath };
+    })();
+
+  const redis =
+    memoryConfig.redis ||
+    (() => {
+      const url = readString(cfg, ['url']);
+      const host = readString(cfg, ['host']);
+      const port = readNumber(cfg, ['port']);
+      if (!url && !host && port === undefined) return undefined;
+      return {
+        url,
+        host,
+        port,
+        password: readString(cfg, ['password']),
+        db: readNumber(cfg, ['db']),
+        keyPrefix: readString(cfg, ['keyPrefix']),
+      };
+    })();
+
+  const postgres =
+    memoryConfig.postgres ||
+    (() => {
+      const connectionString = readString(cfg, ['connectionString', 'connection_string', 'url']);
+      const host = readString(cfg, ['host']);
+      const port = readNumber(cfg, ['port']);
+      if (!connectionString && !host && port === undefined) return undefined;
+      return {
+        connectionString,
+        host,
+        port,
+        database: readString(cfg, ['database']),
+        user: readString(cfg, ['user']),
+        password: readString(cfg, ['password']),
+        tableName: readString(cfg, ['tableName', 'table_name']),
+      };
+    })();
+
+  const upstash =
+    memoryConfig.upstash ||
+    (() => {
+      const url = readString(cfg, ['url']);
+      const token = readString(cfg, ['token']);
+      if (!url || !token) return undefined;
+      return {
+        url,
+        token,
+        keyPrefix: readString(cfg, ['keyPrefix']),
+      };
+    })();
+
+  const cloudflareKV =
+    memoryConfig.cloudflareKV ||
+    (() => {
+      const namespaceId = readString(cfg, ['namespaceId', 'namespace_id']);
+      const accountId = readString(cfg, ['accountId', 'account_id']);
+      const apiToken = readString(cfg, ['apiToken', 'api_token']);
+      if (!namespaceId && !accountId && !apiToken) return undefined;
+      return {
+        namespaceId,
+        accountId,
+        apiToken,
+        keyPrefix: readString(cfg, ['keyPrefix']),
+      };
+    })();
+
+  const cloudflareD1 =
+    memoryConfig.cloudflareD1 ||
+    (() => {
+      const databaseId = readString(cfg, ['databaseId', 'database_id']);
+      const accountId = readString(cfg, ['accountId', 'account_id']);
+      const apiToken = readString(cfg, ['apiToken', 'api_token']);
+      if (!databaseId && !accountId && !apiToken) return undefined;
+      return {
+        databaseId,
+        accountId,
+        apiToken,
+        tableName: readString(cfg, ['tableName', 'table_name']),
+      };
+    })();
+
+  const dynamodb =
+    memoryConfig.dynamodb ||
+    (() => {
+      const tableName = readString(cfg, ['tableName', 'table_name']);
+      if (!tableName) return undefined;
+      return {
+        tableName,
+        region: readString(cfg, ['region']),
+        endpoint: readString(cfg, ['endpoint']),
+        createTable: readBoolean(cfg, ['createTable', 'create_table']),
+      };
+    })();
+
+  const turso =
+    memoryConfig.turso ||
+    (() => {
+      const url = readString(cfg, ['url']);
+      if (!url) return undefined;
+      return {
+        url,
+        authToken: readString(cfg, ['authToken', 'auth_token']),
+        tableName: readString(cfg, ['tableName', 'table_name']),
+      };
+    })();
+
+  const convex =
+    memoryConfig.convex ||
+    (() => {
+      const url = readString(cfg, ['url']);
+      if (!url) return undefined;
+      return {
+        url,
+        adminKey: readString(cfg, ['adminKey', 'admin_key']),
+      };
+    })();
+
+  return {
+    type,
+    redis,
+    postgres,
+    sqlite,
+    file,
+    upstash,
+    cloudflareKV,
+    cloudflareD1,
+    dynamodb,
+    turso,
+    convex,
+  };
+}
 
 /**
  * Options for overriding agent configuration
@@ -440,15 +801,13 @@ export async function getAgent(
 
   // Create memory storage
   let memory: MemoryStorage | undefined;
-  if (agentConfig.memory) {
-    memory = createMemoryStorage({
-      type: agentConfig.memory.type || 'in-memory',
-      redis: agentConfig.memory.redis,
-      postgres: agentConfig.memory.postgres,
-      sqlite: agentConfig.memory.sqlite || (agentConfig.memory.config as { filename: string } | undefined),
-    });
-  } else if (overrides?.memory) {
+  if (overrides?.memory) {
     memory = overrides.memory;
+  } else {
+    const memoryFactoryConfig = normalizeMemoryFactoryConfig(agentConfig.memory);
+    if (memoryFactoryConfig) {
+      memory = createMemoryStorage(memoryFactoryConfig);
+    }
   }
 
   // Get memory config
@@ -472,22 +831,8 @@ export async function getAgent(
         policyCache.set(policyPath, activePolicy);
       }
     } catch (fileError) {
-      // Option 2: Build policy from sekuire.yml config (NEW - correct way)
-      activePolicy = {
-        policy_id: `${config.project.name}-policy`,
-        workspace_id: 'local',
-        version: config.project.version || '1.0.0',
-        status: 'active',
-        hash: 'config-based',
-        content: {
-          agent: {
-            models: agentConfig.models || {}
-          },
-          tools: agentConfig.toolsets || {},
-          permissions: config.permissions || {},
-          rate_limits: config.rate_limits || {}
-        }
-      };
+      // Option 2: Build policy from sekuire.yml config.
+      activePolicy = buildConfigBackedPolicy(config, agentConfig);
     }
 
     policyEnforcer = new PolicyEnforcer(activePolicy);
@@ -521,9 +866,11 @@ export async function getAgent(
 async function createLLMProviderFromConfig(
   llmConfig: AgentConfig['llm']
 ): Promise<LLMProvider> {
-  // Get API key from environment
+  const provider = llmConfig.provider.toLowerCase();
+  const requiresApiKey = provider !== 'ollama';
   const apiKey = process.env[llmConfig.api_key_env];
-  if (!apiKey) {
+
+  if (requiresApiKey && !apiKey) {
     throw new Error(
       `API key not found: ${llmConfig.api_key_env}. ` +
         `Please set this environment variable.`
@@ -532,7 +879,7 @@ async function createLLMProviderFromConfig(
 
   // Create provider
   return createLLMProvider(llmConfig.provider, {
-    apiKey,
+    apiKey: apiKey || '',
     model: llmConfig.model,
     baseUrl: llmConfig.base_url,
     temperature: llmConfig.temperature,

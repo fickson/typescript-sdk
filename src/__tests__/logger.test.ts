@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { SekuireLogger } from '../logger';
 
 const mockPost = vi.fn();
@@ -142,6 +145,34 @@ describe('SekuireLogger', () => {
 
       writeSpy.mockRestore();
       logger.setEnabled(false);
+    });
+
+    it('should write NDJSON to file in file mode', async () => {
+      const fallbackFilePath = path.join(
+        os.tmpdir(),
+        `sekuire-logger-${Date.now()}-${Math.random().toString(16).slice(2)}.ndjson`,
+      );
+      const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+      const logger = new SekuireLogger({
+        sekuireId: 'test-id',
+        fallback: 'file',
+        fallbackFilePath,
+      });
+
+      logger.logEvent('model_call', 'info', { msg: 'file-test' });
+      await logger.flush();
+      await logger.shutdown();
+
+      const content = await fs.readFile(fallbackFilePath, 'utf-8');
+      expect(content).toContain('file-test');
+
+      const stdoutCalls = writeSpy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && c[0].includes('file-test'),
+      );
+      expect(stdoutCalls.length).toBe(0);
+
+      writeSpy.mockRestore();
+      await fs.rm(fallbackFilePath, { force: true });
     });
   });
 

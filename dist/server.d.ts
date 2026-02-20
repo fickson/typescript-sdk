@@ -5,7 +5,10 @@ import { type HandshakeAuth, type HandshakeHello, type HandshakeWelcome, type Ke
 export declare abstract class SekuireServer {
     protected readonly agentId: string;
     protected readonly keyPair: KeyPair;
+    private readonly pendingHandshakes;
+    private static readonly HANDSHAKE_TTL_MS;
     constructor(agentId: string, keyPair: KeyPair);
+    private purgeExpiredHandshakes;
     /**
      * Handle the HELLO handshake message
      */

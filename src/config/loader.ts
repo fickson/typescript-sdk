@@ -53,6 +53,22 @@ export interface AgentConfig {
   llm: LLMConfig;
   memory?: MemoryConfig;
   compliance?: ComplianceConfig;
+  // Legacy/generated schema fields (supported for backwards compatibility)
+  allowed_tools?: string[];
+  blocked_tools?: string[];
+  network?: {
+    enabled?: boolean;
+    require_tls?: boolean;
+    allow?: string[];
+    block?: string[];
+  };
+  filesystem?: {
+    enabled?: boolean;
+    allow_read?: string[];
+    allow_write?: string[];
+    block_all?: string[];
+    allowed_extensions?: string[];
+  };
   models?: {
     allowed_models?: string[];
     blocked_models?: string[];
@@ -80,6 +96,7 @@ export interface MemoryConfig {
     | 'redis'
     | 'postgres'
     | 'sqlite'
+    | 'file'
     | 'upstash'
     | 'cloudflare-kv'
     | 'cloudflare-d1'
@@ -108,6 +125,9 @@ export interface MemoryConfig {
   sqlite?: {
     filename: string;
     tableName?: string;
+  };
+  file?: {
+    path: string;
   };
   upstash?: {
     url: string;
@@ -141,7 +161,41 @@ export interface MemoryConfig {
     url: string;
     adminKey?: string;
   };
-  config?: Record<string, unknown>;
+  config?: {
+    // Common generated template fields
+    filename?: string;
+    path?: string;
+    url?: string;
+    token?: string;
+    table_name?: string;
+    tableName?: string;
+    namespace_id?: string;
+    namespaceId?: string;
+    database_id?: string;
+    databaseId?: string;
+    account_id?: string;
+    accountId?: string;
+    api_token?: string;
+    apiToken?: string;
+    auth_token?: string;
+    authToken?: string;
+    admin_key?: string;
+    adminKey?: string;
+    connection_string?: string;
+    connectionString?: string;
+    host?: string;
+    port?: number;
+    database?: string;
+    user?: string;
+    password?: string;
+    db?: number;
+    keyPrefix?: string;
+    endpoint?: string;
+    create_table?: boolean;
+    createTable?: boolean;
+    readonly?: boolean;
+    [key: string]: unknown;
+  };
 }
 
 export interface ComplianceConfig {

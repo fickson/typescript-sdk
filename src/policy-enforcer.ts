@@ -74,63 +74,40 @@ export class PolicyEnforcer {
   enforceTool(toolName: string): void {
     const tools = this.policy.content?.tools;
 
-    
     // Check blocked tools
     if (tools?.blocked_tools?.includes(toolName)) {
       this.throw("tool.blocked", `Tool ${toolName} is blocked`);
     }
-    
+
     // If no allowlist, allow all tools
     if (!tools?.allowed_tools || tools.allowed_tools.length === 0) {
-
       return;
     }
-    
+
     // Check allowlist with pattern matching
     const isAllowed = tools.allowed_tools.some((t: ToolDefinition) => {
       const pattern = t.name;
 
-      
       // Exact match
       if (pattern === toolName) {
-
         return true;
       }
-      
-      // Category patterns: "files:*" => matches "file_read", "file_write", etc
-      // Check this BEFORE wildcard matching since it contains both : and *
+
+      // Category patterns: "files:*" or "files:[read,write]"
       if (pattern.includes(":")) {
         const [category, ops] = pattern.split(":", 2);
-        const categoryPrefix = this.getCategoryPrefix(category);
-
-        
-        if (ops === "*") {
-          // Match all tools in category
-          const matches = toolName.startsWith(categoryPrefix + "_");
-
-          return matches;
-        }
-        
-        if (ops.startsWith("[") && ops.endsWith("]")) {
-          // Match specific operations: "files:[read,write]"
-          const operations = ops.slice(1, -1).split(",").map(s => s.trim());
-          const matches = operations.some(op => toolName === `${categoryPrefix}_${op}`);
-          console.log(`[DEBUG]   ${matches ? '✓' : '✗'} Category ops: ${operations.join(",")}`);
-          return matches;
-        }
+        return this.matchesCategoryPattern(category, ops, toolName);
       }
-      
+
       // Pattern matching: "file_*", etc (simple wildcards without :)
       if (pattern.includes("*")) {
         const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
-        const matches = regex.test(toolName);
-
-        return matches;
+        return regex.test(toolName);
       }
-      
+
       return false;
     });
-    
+
     if (!isAllowed) {
       this.throw(
         "tool.not_allowed",
@@ -138,16 +115,98 @@ export class PolicyEnforcer {
       );
     }
   }
-  
-  private getCategoryPrefix(category: string): string {
-    const prefixMap: Record<string, string> = {
-      files: "file",
-      directories: "dir",
-      network: "http",
-      data: "json",
-      system: "env",
-    };
-    return prefixMap[category] || category;
+
+  private matchesCategoryPattern(category: string, ops: string, toolName: string): boolean {
+    const normalizedCategory = category.trim().toLowerCase();
+
+    if (ops === "*") {
+      return this.toolMatchesCategory(normalizedCategory, toolName);
+    }
+
+    if (ops.startsWith("[") && ops.endsWith("]")) {
+      const operations = ops
+        .slice(1, -1)
+        .split(",")
+        .map((op) => op.trim())
+        .filter((op) => op.length > 0);
+
+      return operations.some((op) =>
+        this.toolMatchesCategoryOperation(normalizedCategory, op, toolName),
+      );
+    }
+
+    return this.toolMatchesCategoryOperation(normalizedCategory, ops.trim(), toolName);
+  }
+
+  private toolMatchesCategory(category: string, toolName: string): boolean {
+    switch (category) {
+      case "files":
+        return toolName.startsWith("file_");
+      case "directories":
+        return toolName.startsWith("dir_");
+      case "network":
+        return (
+          toolName.startsWith("http_") ||
+          toolName === "download_file" ||
+          toolName === "dns_lookup" ||
+          toolName === "ping" ||
+          toolName === "web_search"
+        );
+      case "data":
+        return (
+          toolName.startsWith("json_") ||
+          toolName.startsWith("csv_") ||
+          toolName.startsWith("yaml_") ||
+          toolName.startsWith("xml_") ||
+          toolName.startsWith("base64_") ||
+          toolName === "hash"
+        );
+      case "system":
+        return (
+          toolName.startsWith("env_") ||
+          toolName === "get_cwd" ||
+          toolName === "get_platform"
+        );
+      default:
+        return toolName.startsWith(`${category}_`);
+    }
+  }
+
+  private toolMatchesCategoryOperation(
+    category: string,
+    operation: string,
+    toolName: string,
+  ): boolean {
+    const op = operation.trim().toLowerCase();
+
+    if (!op) return false;
+
+    switch (category) {
+      case "files":
+        return toolName === `file_${op}`;
+      case "directories":
+        return toolName === `dir_${op}`;
+      case "network":
+        if (op === "search") return toolName === "web_search";
+        if (op === "download") return toolName === "download_file";
+        if (op === "dns") return toolName === "dns_lookup";
+        return toolName === `http_${op}` || toolName === op;
+      case "data":
+        if (op === "hash") return toolName === "hash";
+        if (op.startsWith("json_")) return toolName === op;
+        if (op.startsWith("csv_")) return toolName === op;
+        if (op.startsWith("yaml_")) return toolName === op;
+        if (op.startsWith("xml_")) return toolName === op;
+        if (op.startsWith("base64_")) return toolName === op;
+        return toolName === `json_${op}` || toolName === op;
+      case "system":
+        if (op === "cwd") return toolName === "get_cwd";
+        if (op === "platform") return toolName === "get_platform";
+        if (op === "get" || op === "set") return toolName === `env_${op}`;
+        return toolName === `env_${op}` || toolName === op;
+      default:
+        return toolName === `${category}_${op}` || toolName === op;
+    }
   }
 
   enforceModel(model: string): void {

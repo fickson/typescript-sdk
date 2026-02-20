@@ -89,11 +89,14 @@ export interface HandshakeWelcome {
   agentId: string;
   agentNonce: string; // Random 32-byte hex
   signatureC: string; // Sign(clientNonce) by Agent
+  agentPublicKey: string; // Agent Ed25519 public key
   credentials: string[]; // List of Signed VCs (JWTs)
 }
 
 export interface HandshakeAuth {
   signatureA: string; // Sign(agentNonce) by Client
+  clientPublicKey: string; // Client Ed25519 public key (hex)
+  clientNonce?: string; // Echo of HELLO nonce (optional for backwards compatibility)
 }
 
 // --- Verification & Disputes ---
