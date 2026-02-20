@@ -20,8 +20,8 @@ export interface CustomRule {
   priority?: number;
   scope: { capabilities: string[]; agents?: string[] };
   conditions: RuleCondition[];
-  logic: "any" | "all";
-  action: "deny" | "warn";
+  logic: 'any' | 'all';
+  action: 'deny' | 'warn';
   message: string;
 }
 
@@ -33,12 +33,17 @@ export interface RuleCondition {
 }
 
 export type ConditionOperator =
-  | "contains" | "not_contains"
-  | "equals" | "not_equals"
-  | "starts_with" | "ends_with"
-  | "matches"
-  | "in" | "not_in"
-  | "greater_than" | "less_than";
+  | 'contains'
+  | 'not_contains'
+  | 'equals'
+  | 'not_equals'
+  | 'starts_with'
+  | 'ends_with'
+  | 'matches'
+  | 'in'
+  | 'not_in'
+  | 'greater_than'
+  | 'less_than';
 
 export interface PolicyDecision {
   allowed: boolean;

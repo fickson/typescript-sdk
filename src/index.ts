@@ -122,9 +122,13 @@ export { PolicyEnforcer } from "./policy-enforcer";
 export { PolicyGateway } from "./policy-gateway";
 export type { CustomRule, RuleCondition, ConditionOperator, PolicyDecision, PolicyViolation, RateLimitsConfig, PerAgentLimits } from "./types/policy";
 export {
-    SekuireServer, createSekuireExpressMiddleware,
-    createSekuireFastifyPlugin
+    SekuireServer,
+    createSekuireExpressMiddleware,
+    createSekuireExpressRequestAuthMiddleware,
+    createSekuireFastifyPlugin,
+    createSekuireFastifyRequestAuthHook
 } from "./server";
+export type { RequestAuthOptions } from "./server";
 export type { Tool, ToolInput, ToolMetadata, ToolParameter } from "./tools";
 // Export tool system
 export {

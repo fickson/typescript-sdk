@@ -1521,6 +1521,24 @@ interface HandshakeAuth {
     clientPublicKey: string;
     clientNonce?: string;
 }
+interface HandshakeAuthResult {
+    success: true;
+    sessionToken: string;
+    expiresInSeconds: number;
+}
+interface SignedRequestVerificationInput {
+    method: string;
+    path: string;
+    body?: unknown;
+    sessionToken: string | string[] | undefined;
+    timestamp: string | number | string[] | undefined;
+    signature: string | string[] | undefined;
+}
+interface VerifiedRequestContext {
+    sessionToken: string;
+    clientPublicKey: string;
+    timestampMs: number;
+}
 interface VerifyAgentRequest {
     sekuireId: string;
     status: VerificationStatus;
@@ -1596,6 +1614,7 @@ interface HandshakeResult {
     agentId: string;
     verified: boolean;
     credentials: string[];
+    sessionToken?: string;
 }
 declare class SekuireError extends Error {
     readonly code: string;
@@ -1626,6 +1645,7 @@ type AgentId = string;
 declare class SekuireClient {
     private readonly keyPair;
     private readonly httpClient;
+    private sessionToken?;
     constructor(keyPair: KeyPair, config: SekuireClientConfig);
     /**
      * Perform the full handshake with a remote agent
@@ -1651,6 +1671,20 @@ declare class SekuireClient {
      * Sign data with the client's private key
      */
     sign(data: string): string;
+    private buildRequestSignatureMessage;
+    /**
+     * Build signed headers for protected agent endpoints (for example /chat, /webhook).
+     * Requires a successful connect() call to obtain a session token.
+     */
+    createSignedRequestHeaders(method: string, path: string, body?: unknown, timestampMs?: number): Record<string, string>;
+    /**
+     * Get the current authenticated session token, if any.
+     */
+    getSessionToken(): string | undefined;
+    /**
+     * Clear the local session token.
+     */
+    clearSession(): void;
     /**
      * Get the client's public key
      */
@@ -2764,9 +2798,16 @@ declare abstract class SekuireServer {
     protected readonly agentId: string;
     protected readonly keyPair: KeyPair;
     private readonly pendingHandshakes;
+    private readonly activeSessions;
     private static readonly HANDSHAKE_TTL_MS;
+    private static readonly SESSION_TTL_MS;
+    private static readonly REQUEST_CLOCK_SKEW_MS;
     constructor(agentId: string, keyPair: KeyPair);
     private purgeExpiredHandshakes;
+    private purgeExpiredSessions;
+    private firstHeaderValue;
+    private parseTimestamp;
+    private buildRequestSignatureMessage;
     /**
      * Handle the HELLO handshake message
      */
@@ -2774,7 +2815,12 @@ declare abstract class SekuireServer {
     /**
      * Handle the AUTH handshake message
      */
-    handleAuth(auth: HandshakeAuth, clientNonce: string): Promise<void>;
+    handleAuth(auth: HandshakeAuth, clientNonce: string): Promise<HandshakeAuthResult>;
+    /**
+     * Verify a signed request for protected application endpoints (for example /chat, /webhook).
+     * Requires a valid handshake session token and Ed25519 signature by the authenticated client key.
+     */
+    verifySignedRequest(input: SignedRequestVerificationInput): Promise<VerifiedRequestContext>;
     /**
      * Get the agent's public key
      */
@@ -2792,10 +2838,23 @@ declare abstract class SekuireServer {
  * Express.js middleware for Sekuire protocol
  */
 declare function createSekuireExpressMiddleware(server: SekuireServer): any[];
+interface RequestAuthOptions {
+    protectedPaths?: string[];
+}
+/**
+ * Express middleware that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+declare function createSekuireExpressRequestAuthMiddleware(server: SekuireServer, options?: RequestAuthOptions): (req: any, res: any, next: any) => Promise<any>;
 /**
  * Fastify plugin for Sekuire protocol
  */
 declare function createSekuireFastifyPlugin(server: SekuireServer): (fastify: any, options: any) => Promise<void>;
+/**
+ * Fastify preHandler that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+declare function createSekuireFastifyRequestAuthHook(server: SekuireServer, options?: RequestAuthOptions): (request: any, reply: any) => Promise<void>;
 
 interface ToolInput {
     [key: string]: string | number | boolean | object;
@@ -3656,5 +3715,5 @@ declare class A2AServer {
     private generateId;
 }
 
-export { A2AClient, A2AError, A2AServer, A2ATaskDelegator, SekuireAgent as Agent, AgentIdentity, AnthropicProvider, BaseMemoryStorage, Beacon, CONVEX_FUNCTIONS_TEMPLATE, CONVEX_SCHEMA_TEMPLATE, CloudflareD1Storage, CloudflareKVStorage, ComplianceError, ComplianceMonitor, ContentPolicyError, ConvexStorage, CryptoError, DEFAULT_API_URL, DynamoDBStorage, FileAccessError, GoogleProvider, InMemoryStorage, NetworkComplianceError, NetworkError, OllamaProvider, OpenAIProvider, PolicyClient, PolicyEnforcer, PolicyGateway, PolicyViolationError, PostgresStorage, ProtocolError, RedisStorage, RuntimeCredentialsStore, SQLiteStorage, SekuireAgent$1 as SekuireAgent, SekuireAgentBuilder, SekuireClient, SekuireCrypto, SekuireError, SekuireLogger, SekuireRegistryClient, SekuireSDK, SekuireServer, SekuireSpanExporter, TaskWorker, Tool, ToolPatternParser, ToolRegistry, ToolUsageError, TursoStorage, UpstashStorage, applyBootstrapResponse, builtInTools, calculateSekuireId, calculateSekuireIdLegacy, createAgent, createBeacon, createDefaultToolRegistry, createDelegationTool, createDelegator, createDiscoveryTool, createLLMProvider, createMemoryStorage, createRegistryClient, createSekuireClient, createSekuireExpressMiddleware, createSekuireFastifyPlugin, createWorker, detectDeploymentUrl, generateKeyPair, getAgent, getAgentConfig, getAgents, getTools$1 as getLegacyTools, getStorageInfo, getSystemPrompt, getTools, getTracer, hasStorage, initTelemetry, listStorageTypes, llm, loadConfig, loadSystemPrompt, loadTools, registerStorage, shutdownTelemetry, tool, tools };
-export type { A2AArtifact, A2AClientOptions, A2AMessage, A2AMessagePart, A2ARouteRequest, A2ARouteResponse, A2AServerOptions, A2ATask, A2ATaskState, A2ATaskStatus, ActivePolicy, ActivePolicyResponse, AgentCapabilities, AgentCard, AgentConfig, AgentId, AgentInvokeOptions, AgentOptions, AgentProvider, AgentResponse$1 as AgentResponse, AgentSkill, BeaconConfig, BeaconStatus, BootstrapResponse, BootstrapResponseData, BootstrapTarget, BuiltInMemoryType, ChatChunk, ChatOptions, ChatResponse, CloudflareD1Config, CloudflareKVConfig, ComplianceConfig, ComplianceViolation, ConditionOperator, ToolDefinition$1 as ConfigToolDefinition, ConvexConfig, CreateOrgRequest, CreateWorkspaceRequest, CustomRule, DelegationRequest, DelegationResult, DelegatorConfig, DisputeRequest, DisputeResponse, DynamoDBConfig, EventLog, EventType, ExporterType, FallbackMode, HandshakeAuth, HandshakeHello, HandshakeResult, HandshakeWelcome, HexString, IdentityConfig, InstallationCredentials, InviteRequest, InviteResponse, JsonRpcError, JsonRpcRequest, JsonRpcResponse, KeyPair, LLMConfig, Message as LLMMessage, LLMProvider, LLMProviderConfig, ToolCallFunction as LLMToolCall, ToolDefinition as LLMToolDefinition, LeaderboardEntry, LoggerConfig$1 as LoggerConfig, Manifest, MemoryConfig, MemoryFactoryConfig, MemoryMessage, MemoryStorage, MemoryType, Message$1 as Message, OrgResponse, OrgSummary, PerAgentLimits, PolicyDecision, PolicyViolation, PostgresConfig, ProjectMetadata, PublishAgentOptions, PublishRequest, PublishResponse, RateLimitsConfig$1 as RateLimitsConfig, RedisConfig, RegistryClientConfig, ReputationLog, ReputationResponse, RuleCondition, RuntimeCredentials, SQLiteConfig, SearchAgentsOptions, SekuireAgentConfig, SekuireClientConfig, SekuireConfig, SekuireExporterConfig, SekuireSDKConfig, Severity, SkillContext, SkillHandler, StreamingSkillContext, StreamingSkillHandler, StreamingUpdate, SubmitReputationRequest, TaskCompletion, TaskContext, TaskEvent, TaskHandler, TaskState, TaskUpdateEvent, TasksCancelParams, TasksGetParams, TasksSendParams, TasksSendSubscribeParams, TelemetryConfig, ToolCall, ToolDefinition$2 as ToolDefinition, ToolInput, ToolMetadata, ToolParameter, ToolsSchema, TrustHeaders, TrustHeadersRequest, TursoConfig, UpdateAgentOptions, UpstashConfig, UserContextResponse, VerificationIssue, VerificationRequest, VerificationResult, VerificationStatus, VerifyAgentRequest, WorkerConfig, WorkspaceResponse, WorkspaceSummary };
+export { A2AClient, A2AError, A2AServer, A2ATaskDelegator, SekuireAgent as Agent, AgentIdentity, AnthropicProvider, BaseMemoryStorage, Beacon, CONVEX_FUNCTIONS_TEMPLATE, CONVEX_SCHEMA_TEMPLATE, CloudflareD1Storage, CloudflareKVStorage, ComplianceError, ComplianceMonitor, ContentPolicyError, ConvexStorage, CryptoError, DEFAULT_API_URL, DynamoDBStorage, FileAccessError, GoogleProvider, InMemoryStorage, NetworkComplianceError, NetworkError, OllamaProvider, OpenAIProvider, PolicyClient, PolicyEnforcer, PolicyGateway, PolicyViolationError, PostgresStorage, ProtocolError, RedisStorage, RuntimeCredentialsStore, SQLiteStorage, SekuireAgent$1 as SekuireAgent, SekuireAgentBuilder, SekuireClient, SekuireCrypto, SekuireError, SekuireLogger, SekuireRegistryClient, SekuireSDK, SekuireServer, SekuireSpanExporter, TaskWorker, Tool, ToolPatternParser, ToolRegistry, ToolUsageError, TursoStorage, UpstashStorage, applyBootstrapResponse, builtInTools, calculateSekuireId, calculateSekuireIdLegacy, createAgent, createBeacon, createDefaultToolRegistry, createDelegationTool, createDelegator, createDiscoveryTool, createLLMProvider, createMemoryStorage, createRegistryClient, createSekuireClient, createSekuireExpressMiddleware, createSekuireExpressRequestAuthMiddleware, createSekuireFastifyPlugin, createSekuireFastifyRequestAuthHook, createWorker, detectDeploymentUrl, generateKeyPair, getAgent, getAgentConfig, getAgents, getTools$1 as getLegacyTools, getStorageInfo, getSystemPrompt, getTools, getTracer, hasStorage, initTelemetry, listStorageTypes, llm, loadConfig, loadSystemPrompt, loadTools, registerStorage, shutdownTelemetry, tool, tools };
+export type { A2AArtifact, A2AClientOptions, A2AMessage, A2AMessagePart, A2ARouteRequest, A2ARouteResponse, A2AServerOptions, A2ATask, A2ATaskState, A2ATaskStatus, ActivePolicy, ActivePolicyResponse, AgentCapabilities, AgentCard, AgentConfig, AgentId, AgentInvokeOptions, AgentOptions, AgentProvider, AgentResponse$1 as AgentResponse, AgentSkill, BeaconConfig, BeaconStatus, BootstrapResponse, BootstrapResponseData, BootstrapTarget, BuiltInMemoryType, ChatChunk, ChatOptions, ChatResponse, CloudflareD1Config, CloudflareKVConfig, ComplianceConfig, ComplianceViolation, ConditionOperator, ToolDefinition$1 as ConfigToolDefinition, ConvexConfig, CreateOrgRequest, CreateWorkspaceRequest, CustomRule, DelegationRequest, DelegationResult, DelegatorConfig, DisputeRequest, DisputeResponse, DynamoDBConfig, EventLog, EventType, ExporterType, FallbackMode, HandshakeAuth, HandshakeAuthResult, HandshakeHello, HandshakeResult, HandshakeWelcome, HexString, IdentityConfig, InstallationCredentials, InviteRequest, InviteResponse, JsonRpcError, JsonRpcRequest, JsonRpcResponse, KeyPair, LLMConfig, Message as LLMMessage, LLMProvider, LLMProviderConfig, ToolCallFunction as LLMToolCall, ToolDefinition as LLMToolDefinition, LeaderboardEntry, LoggerConfig$1 as LoggerConfig, Manifest, MemoryConfig, MemoryFactoryConfig, MemoryMessage, MemoryStorage, MemoryType, Message$1 as Message, OrgResponse, OrgSummary, PerAgentLimits, PolicyDecision, PolicyViolation, PostgresConfig, ProjectMetadata, PublishAgentOptions, PublishRequest, PublishResponse, RateLimitsConfig$1 as RateLimitsConfig, RedisConfig, RegistryClientConfig, ReputationLog, ReputationResponse, RequestAuthOptions, RuleCondition, RuntimeCredentials, SQLiteConfig, SearchAgentsOptions, SekuireAgentConfig, SekuireClientConfig, SekuireConfig, SekuireExporterConfig, SekuireSDKConfig, Severity, SignedRequestVerificationInput, SkillContext, SkillHandler, StreamingSkillContext, StreamingSkillHandler, StreamingUpdate, SubmitReputationRequest, TaskCompletion, TaskContext, TaskEvent, TaskHandler, TaskState, TaskUpdateEvent, TasksCancelParams, TasksGetParams, TasksSendParams, TasksSendSubscribeParams, TelemetryConfig, ToolCall, ToolDefinition$2 as ToolDefinition, ToolInput, ToolMetadata, ToolParameter, ToolsSchema, TrustHeaders, TrustHeadersRequest, TursoConfig, UpdateAgentOptions, UpstashConfig, UserContextResponse, VerificationIssue, VerificationRequest, VerificationResult, VerificationStatus, VerifiedRequestContext, VerifyAgentRequest, WorkerConfig, WorkspaceResponse, WorkspaceSummary };

@@ -4494,11 +4494,13 @@ class SekuireClient {
                 clientPublicKey: this.keyPair.publicKey,
                 clientNonce,
             };
-            await this.httpClient.post(`${agentUrl}/sekuire/auth`, auth);
+            const authResult = await this.httpClient.post(`${agentUrl}/sekuire/auth`, auth);
+            this.sessionToken = authResult.sessionToken;
             return {
                 agentId: welcome.agentId,
                 verified: true,
                 credentials: welcome.credentials,
+                sessionToken: authResult.sessionToken,
             };
         }
         catch (error) {
@@ -4590,6 +4592,39 @@ class SekuireClient {
      */
     sign(data) {
         return SekuireCrypto.sign(data, this.keyPair.privateKey);
+    }
+    buildRequestSignatureMessage(method, path, timestampMs, body) {
+        const normalizedBody = body === undefined ? "" : JSON.stringify(body);
+        const bodyHash = SekuireCrypto.hash(normalizedBody);
+        return `${method.toUpperCase()}\n${path}\n${timestampMs}\n${bodyHash}`;
+    }
+    /**
+     * Build signed headers for protected agent endpoints (for example /chat, /webhook).
+     * Requires a successful connect() call to obtain a session token.
+     */
+    createSignedRequestHeaders(method, path, body, timestampMs = Date.now()) {
+        if (!this.sessionToken) {
+            throw new ProtocolError("No active session token. Call connect() before signing requests.");
+        }
+        const message = this.buildRequestSignatureMessage(method, path, timestampMs, body);
+        const signature = SekuireCrypto.sign(message, this.keyPair.privateKey);
+        return {
+            "x-sekuire-session": this.sessionToken,
+            "x-sekuire-timestamp": String(Math.floor(timestampMs)),
+            "x-sekuire-signature": signature,
+        };
+    }
+    /**
+     * Get the current authenticated session token, if any.
+     */
+    getSessionToken() {
+        return this.sessionToken;
+    }
+    /**
+     * Clear the local session token.
+     */
+    clearSession() {
+        this.sessionToken = undefined;
     }
     /**
      * Get the client's public key
@@ -5495,19 +5530,19 @@ const llm = {
     openai: (config) => {
         return OpenAIProvider.create({
             ...config,
-            model: config.model || 'gpt-5',
+            model: config.model || 'gpt-5.2',
         });
     },
     anthropic: (config) => {
         return AnthropicProvider.create({
             ...config,
-            model: config.model || 'claude-sonnet-4-5-20250929',
+            model: config.model || 'claude-sonnet-4-6',
         });
     },
     google: (config) => {
         return GoogleProvider.create({
             ...config,
-            model: config.model || 'gemini-3.1-pro-preview-06-17',
+            model: config.model || 'gemini-3.1-pro-preview',
         });
     },
     ollama: (config) => {
@@ -10687,6 +10722,7 @@ class SekuireServer {
         this.agentId = agentId;
         this.keyPair = keyPair;
         this.pendingHandshakes = new Map();
+        this.activeSessions = new Map();
     }
     purgeExpiredHandshakes() {
         const now = Date.now();
@@ -10695,6 +10731,47 @@ class SekuireServer {
                 this.pendingHandshakes.delete(clientNonce);
             }
         }
+    }
+    purgeExpiredSessions() {
+        const now = Date.now();
+        for (const [sessionToken, session] of this.activeSessions) {
+            if (now - session.createdAt > SekuireServer.SESSION_TTL_MS) {
+                this.activeSessions.delete(sessionToken);
+            }
+        }
+    }
+    firstHeaderValue(value) {
+        if (typeof value === "number" && Number.isFinite(value)) {
+            return String(Math.floor(value));
+        }
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            return trimmed.length > 0 ? trimmed : undefined;
+        }
+        if (Array.isArray(value) && value.length > 0) {
+            return this.firstHeaderValue(value[0]);
+        }
+        return undefined;
+    }
+    parseTimestamp(value) {
+        const trimmed = value.trim();
+        if (!trimmed) {
+            throw new ProtocolError("Missing request timestamp");
+        }
+        const numeric = Number(trimmed);
+        if (Number.isFinite(numeric)) {
+            return Math.floor(numeric);
+        }
+        const parsedDate = Date.parse(trimmed);
+        if (Number.isNaN(parsedDate)) {
+            throw new ProtocolError("Invalid request timestamp");
+        }
+        return parsedDate;
+    }
+    buildRequestSignatureMessage(method, path, timestampMs, body) {
+        const normalizedBody = body === undefined ? "" : JSON.stringify(body);
+        const bodyHash = SekuireCrypto.hash(normalizedBody);
+        return `${method.toUpperCase()}\n${path}\n${timestampMs}\n${bodyHash}`;
     }
     /**
      * Handle the HELLO handshake message
@@ -10760,12 +10837,76 @@ class SekuireServer {
                 throw new ProtocolError("Client signature verification failed");
             }
             this.pendingHandshakes.delete(clientNonce);
+            this.purgeExpiredSessions();
+            const sessionToken = SekuireCrypto.generateNonce();
+            const now = Date.now();
+            this.activeSessions.set(sessionToken, {
+                clientPublicKey: auth.clientPublicKey,
+                createdAt: now,
+                lastSeenAt: now,
+            });
+            return {
+                success: true,
+                sessionToken,
+                expiresInSeconds: Math.floor(SekuireServer.SESSION_TTL_MS / 1000),
+            };
         }
         catch (error) {
             if (error instanceof ProtocolError || error instanceof CryptoError) {
                 throw error;
             }
             throw new NetworkError(`Failed to handle AUTH: ${error.message}`, error);
+        }
+    }
+    /**
+     * Verify a signed request for protected application endpoints (for example /chat, /webhook).
+     * Requires a valid handshake session token and Ed25519 signature by the authenticated client key.
+     */
+    async verifySignedRequest(input) {
+        try {
+            const sessionToken = this.firstHeaderValue(input.sessionToken);
+            const signature = this.firstHeaderValue(input.signature);
+            const timestampRaw = this.firstHeaderValue(input.timestamp);
+            if (!sessionToken) {
+                throw new ProtocolError("Missing session token");
+            }
+            if (!signature) {
+                throw new ProtocolError("Missing request signature");
+            }
+            if (!timestampRaw) {
+                throw new ProtocolError("Missing request timestamp");
+            }
+            if (!SekuireCrypto.isValidHex(signature)) {
+                throw new ProtocolError("Invalid signature format");
+            }
+            const timestampMs = this.parseTimestamp(timestampRaw);
+            const now = Date.now();
+            if (Math.abs(now - timestampMs) > SekuireServer.REQUEST_CLOCK_SKEW_MS) {
+                throw new ProtocolError("Request timestamp is outside allowed skew");
+            }
+            this.purgeExpiredSessions();
+            const session = this.activeSessions.get(sessionToken);
+            if (!session) {
+                throw new ProtocolError("Invalid or expired session token");
+            }
+            const message = this.buildRequestSignatureMessage(input.method, input.path, timestampMs, input.body);
+            const verified = SekuireCrypto.verify(message, signature, session.clientPublicKey);
+            if (!verified) {
+                throw new ProtocolError("Request signature verification failed");
+            }
+            session.lastSeenAt = now;
+            this.activeSessions.set(sessionToken, session);
+            return {
+                sessionToken,
+                clientPublicKey: session.clientPublicKey,
+                timestampMs,
+            };
+        }
+        catch (error) {
+            if (error instanceof ProtocolError || error instanceof CryptoError) {
+                throw error;
+            }
+            throw new NetworkError(`Failed to verify signed request: ${error.message}`, error);
         }
     }
     /**
@@ -10790,6 +10931,8 @@ class SekuireServer {
     }
 }
 SekuireServer.HANDSHAKE_TTL_MS = 5 * 60 * 1000;
+SekuireServer.SESSION_TTL_MS = 60 * 60 * 1000;
+SekuireServer.REQUEST_CLOCK_SKEW_MS = 5 * 60 * 1000;
 /**
  * Express.js middleware for Sekuire protocol
  */
@@ -10811,8 +10954,8 @@ function createSekuireExpressMiddleware(server) {
                     if (!clientNonce) {
                         return res.status(400).json({ error: "Missing client nonce" });
                     }
-                    await server.handleAuth(req.body, clientNonce);
-                    return res.json({ success: true });
+                    const result = await server.handleAuth(req.body, clientNonce);
+                    return res.json(result);
                 }
                 else if (req.path === "/sekuire/webhook" && req.method === "POST") {
                     const signature = req.headers["x-sekuire-signature"];
@@ -10828,6 +10971,40 @@ function createSekuireExpressMiddleware(server) {
             }
         },
     ];
+}
+function normalizeRequestPath(path) {
+    return path.split("?")[0] || path;
+}
+function isProtectedPath(path, protectedPaths) {
+    const normalized = normalizeRequestPath(path);
+    return protectedPaths.includes(normalized);
+}
+/**
+ * Express middleware that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+function createSekuireExpressRequestAuthMiddleware(server, options) {
+    const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+    return async (req, res, next) => {
+        if (req.method !== "POST" ||
+            !isProtectedPath(req.path || req.url || "", protectedPaths)) {
+            return next();
+        }
+        try {
+            await server.verifySignedRequest({
+                method: req.method,
+                path: req.path || req.url,
+                body: req.body,
+                sessionToken: req.headers["x-sekuire-session"],
+                timestamp: req.headers["x-sekuire-timestamp"],
+                signature: req.headers["x-sekuire-signature"],
+            });
+            return next();
+        }
+        catch (error) {
+            return res.status(401).json({ error: error.message });
+        }
+    };
 }
 /**
  * Fastify plugin for Sekuire protocol
@@ -10865,8 +11042,8 @@ function createSekuireFastifyPlugin(server) {
                     reply.code(400);
                     return { error: "Missing client nonce" };
                 }
-                await server.handleAuth(request.body, clientNonce);
-                return { success: true };
+                const result = await server.handleAuth(request.body, clientNonce);
+                return result;
             }
             catch (error) {
                 const statusCode = error instanceof ProtocolError ? 400 : 500;
@@ -10885,6 +11062,34 @@ function createSekuireFastifyPlugin(server) {
                 return { error: error.message };
             }
         });
+    };
+}
+/**
+ * Fastify preHandler that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+function createSekuireFastifyRequestAuthHook(server, options) {
+    const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+    return async (request, reply) => {
+        if (request.method !== "POST" ||
+            !isProtectedPath(request.url || "", protectedPaths)) {
+            return;
+        }
+        try {
+            await server.verifySignedRequest({
+                method: request.method,
+                path: normalizeRequestPath(request.url || ""),
+                body: request.body,
+                sessionToken: request.headers["x-sekuire-session"],
+                timestamp: request.headers["x-sekuire-timestamp"],
+                signature: request.headers["x-sekuire-signature"],
+            });
+        }
+        catch (error) {
+            reply.code(401);
+            reply.send({ error: error.message });
+            return;
+        }
     };
 }
 
@@ -11407,4 +11612,4 @@ class A2AServer {
     }
 }
 
-export { A2AClient, A2AError, A2AServer, A2ATaskDelegator, SekuireAgent as Agent, AgentIdentity, AnthropicProvider, BaseMemoryStorage, Beacon, CONVEX_FUNCTIONS_TEMPLATE, CONVEX_SCHEMA_TEMPLATE, CloudflareD1Storage, CloudflareKVStorage, ComplianceError, ComplianceMonitor, ContentPolicyError, ConvexStorage, CryptoError, DEFAULT_API_URL, DynamoDBStorage, FileAccessError, GoogleProvider, InMemoryStorage, NetworkComplianceError, NetworkError, OllamaProvider, OpenAIProvider, PolicyClient, PolicyEnforcer, PolicyGateway, PolicyViolationError, PostgresStorage, ProtocolError, RedisStorage, RuntimeCredentialsStore, SQLiteStorage, SekuireAgent$1 as SekuireAgent, SekuireAgentBuilder, SekuireClient, SekuireCrypto, SekuireError, SekuireLogger, SekuireRegistryClient, SekuireSDK, SekuireServer, SekuireSpanExporter, TaskWorker, ToolPatternParser, ToolRegistry, ToolUsageError, TursoStorage, UpstashStorage, applyBootstrapResponse, builtInTools, calculateSekuireId, calculateSekuireIdLegacy, createAgent, createBeacon, createDefaultToolRegistry, createDelegationTool, createDelegator, createDiscoveryTool, createLLMProvider, createMemoryStorage, createRegistryClient, createSekuireClient, createSekuireExpressMiddleware, createSekuireFastifyPlugin, createWorker, detectDeploymentUrl, generateKeyPair, getAgent, getAgentConfig, getAgents, getTools$1 as getLegacyTools, getStorageInfo, getSystemPrompt, getTools, getTracer, hasStorage, initTelemetry, listStorageTypes, llm, loadConfig, loadSystemPrompt, loadTools, registerStorage, shutdownTelemetry, tool, tools };
+export { A2AClient, A2AError, A2AServer, A2ATaskDelegator, SekuireAgent as Agent, AgentIdentity, AnthropicProvider, BaseMemoryStorage, Beacon, CONVEX_FUNCTIONS_TEMPLATE, CONVEX_SCHEMA_TEMPLATE, CloudflareD1Storage, CloudflareKVStorage, ComplianceError, ComplianceMonitor, ContentPolicyError, ConvexStorage, CryptoError, DEFAULT_API_URL, DynamoDBStorage, FileAccessError, GoogleProvider, InMemoryStorage, NetworkComplianceError, NetworkError, OllamaProvider, OpenAIProvider, PolicyClient, PolicyEnforcer, PolicyGateway, PolicyViolationError, PostgresStorage, ProtocolError, RedisStorage, RuntimeCredentialsStore, SQLiteStorage, SekuireAgent$1 as SekuireAgent, SekuireAgentBuilder, SekuireClient, SekuireCrypto, SekuireError, SekuireLogger, SekuireRegistryClient, SekuireSDK, SekuireServer, SekuireSpanExporter, TaskWorker, ToolPatternParser, ToolRegistry, ToolUsageError, TursoStorage, UpstashStorage, applyBootstrapResponse, builtInTools, calculateSekuireId, calculateSekuireIdLegacy, createAgent, createBeacon, createDefaultToolRegistry, createDelegationTool, createDelegator, createDiscoveryTool, createLLMProvider, createMemoryStorage, createRegistryClient, createSekuireClient, createSekuireExpressMiddleware, createSekuireExpressRequestAuthMiddleware, createSekuireFastifyPlugin, createSekuireFastifyRequestAuthHook, createWorker, detectDeploymentUrl, generateKeyPair, getAgent, getAgentConfig, getAgents, getTools$1 as getLegacyTools, getStorageInfo, getSystemPrompt, getTools, getTracer, hasStorage, initTelemetry, listStorageTypes, llm, loadConfig, loadSystemPrompt, loadTools, registerStorage, shutdownTelemetry, tool, tools };

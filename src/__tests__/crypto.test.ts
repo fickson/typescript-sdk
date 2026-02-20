@@ -88,13 +88,17 @@ describe('SekuireCrypto', () => {
 
     it('should produce deterministic output', () => {
       const params = { model: 'gpt-4', systemPrompt: 'You are a helpful assistant.', tools: '[]' };
-      expect(SekuireCrypto.calculateSekuireId(params)).toBe(SekuireCrypto.calculateSekuireId(params));
+      expect(SekuireCrypto.calculateSekuireId(params)).toBe(
+        SekuireCrypto.calculateSekuireId(params)
+      );
     });
 
     it('should ignore projectName and projectVersion', () => {
       const base = { model: 'gpt-4o', systemPrompt: 'test', tools: '[]' };
       const withProject = { ...base, projectName: 'A', projectVersion: '1.0' };
-      expect(SekuireCrypto.calculateSekuireId(base)).toBe(SekuireCrypto.calculateSekuireId(withProject));
+      expect(SekuireCrypto.calculateSekuireId(base)).toBe(
+        SekuireCrypto.calculateSekuireId(withProject)
+      );
     });
 
     it('should normalize JSON whitespace in tools', () => {
@@ -113,20 +117,28 @@ describe('SekuireCrypto', () => {
 
     it('should be insensitive to prompt leading/trailing whitespace', () => {
       const id1 = SekuireCrypto.calculateSekuireId({
-        model: 'gpt-4o', systemPrompt: '  hello  ', tools: '[]',
+        model: 'gpt-4o',
+        systemPrompt: '  hello  ',
+        tools: '[]',
       });
       const id2 = SekuireCrypto.calculateSekuireId({
-        model: 'gpt-4o', systemPrompt: 'hello', tools: '[]',
+        model: 'gpt-4o',
+        systemPrompt: 'hello',
+        tools: '[]',
       });
       expect(id1).toBe(id2);
     });
 
     it('should generate different IDs for different parameters', () => {
       const id1 = SekuireCrypto.calculateSekuireId({
-        model: 'gpt-4', systemPrompt: 'You are a helpful assistant.', tools: '[]',
+        model: 'gpt-4',
+        systemPrompt: 'You are a helpful assistant.',
+        tools: '[]',
       });
       const id2 = SekuireCrypto.calculateSekuireId({
-        model: 'gpt-4', systemPrompt: 'You are a different assistant.', tools: '[]',
+        model: 'gpt-4',
+        systemPrompt: 'You are a different assistant.',
+        tools: '[]',
       });
       expect(id1).not.toBe(id2);
     });
@@ -155,7 +167,7 @@ describe('SekuireCrypto', () => {
         projectVersion: '1.0.0',
       };
       expect(SekuireCrypto.calculateSekuireIdLegacy(params)).toBe(
-        SekuireCrypto.calculateSekuireIdLegacy(params),
+        SekuireCrypto.calculateSekuireIdLegacy(params)
       );
     });
   });

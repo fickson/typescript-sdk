@@ -38,7 +38,11 @@ describe('SekuireLogger', () => {
     });
 
     it('should construct disabled', () => {
-      const logger = new SekuireLogger({ sekuireId: 'test-id', enabled: false, fallback: 'silent' });
+      const logger = new SekuireLogger({
+        sekuireId: 'test-id',
+        enabled: false,
+        fallback: 'silent',
+      });
       expect(logger.getStatus().enabled).toBe(false);
     });
 
@@ -118,7 +122,7 @@ describe('SekuireLogger', () => {
       await logger.flush();
 
       const calls = writeSpy.mock.calls.filter(
-        (c) => typeof c[0] === 'string' && c[0].includes('test'),
+        (c) => typeof c[0] === 'string' && c[0].includes('test')
       );
       expect(calls.length).toBeGreaterThan(0);
       const parsed = JSON.parse(calls[0][0] as string);
@@ -139,7 +143,7 @@ describe('SekuireLogger', () => {
       await logger.flush();
 
       const calls = writeSpy.mock.calls.filter(
-        (c) => typeof c[0] === 'string' && c[0].includes('silent-test'),
+        (c) => typeof c[0] === 'string' && c[0].includes('silent-test')
       );
       expect(calls.length).toBe(0);
 
@@ -150,7 +154,7 @@ describe('SekuireLogger', () => {
     it('should write NDJSON to file in file mode', async () => {
       const fallbackFilePath = path.join(
         os.tmpdir(),
-        `sekuire-logger-${Date.now()}-${Math.random().toString(16).slice(2)}.ndjson`,
+        `sekuire-logger-${Date.now()}-${Math.random().toString(16).slice(2)}.ndjson`
       );
       const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
       const logger = new SekuireLogger({
@@ -167,7 +171,7 @@ describe('SekuireLogger', () => {
       expect(content).toContain('file-test');
 
       const stdoutCalls = writeSpy.mock.calls.filter(
-        (c) => typeof c[0] === 'string' && c[0].includes('file-test'),
+        (c) => typeof c[0] === 'string' && c[0].includes('file-test')
       );
       expect(stdoutCalls.length).toBe(0);
 
@@ -225,7 +229,7 @@ describe('SekuireLogger', () => {
 
       expect(onError).toHaveBeenCalledWith(
         expect.any(Error),
-        expect.objectContaining({ operation: 'retry_exhausted' }),
+        expect.objectContaining({ operation: 'retry_exhausted' })
       );
 
       writeSpy.mockRestore();

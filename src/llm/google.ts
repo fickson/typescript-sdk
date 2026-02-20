@@ -18,7 +18,11 @@ async function loadGoogleSDK() {
       );
     }
   }
-  return { GoogleGenAI: _googleGenAI, HarmCategory: _harmCategory, HarmBlockThreshold: _harmBlockThreshold };
+  return {
+    GoogleGenAI: _googleGenAI,
+    HarmCategory: _harmCategory,
+    HarmBlockThreshold: _harmBlockThreshold,
+  };
 }
 
 export class GoogleProvider extends BaseLLMProvider {
@@ -57,10 +61,22 @@ export class GoogleProvider extends BaseLLMProvider {
           topP: options?.top_p,
           stopSequences: options?.stop,
           safetySettings: [
-            { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-            { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-            { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
-            { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+            {
+              category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
+            {
+              category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+              threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
+            },
           ],
           ...(tools && { tools }),
         },

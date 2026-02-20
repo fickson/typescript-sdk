@@ -4,6 +4,7 @@ import {
     type AgentResponse,
     CryptoError,
     type HandshakeAuth,
+    type HandshakeAuthResult,
     type HandshakeHello,
     type HandshakeResult,
     type HandshakeWelcome,
@@ -18,6 +19,7 @@ import {
  */
 export class SekuireClient {
   private readonly httpClient: HttpClient;
+  private sessionToken?: string;
 
   constructor(
     private readonly keyPair: KeyPair,
@@ -75,12 +77,17 @@ export class SekuireClient {
         clientNonce,
       };
 
-      await this.httpClient.post(`${agentUrl}/sekuire/auth`, auth);
+      const authResult = await this.httpClient.post<HandshakeAuthResult>(
+        `${agentUrl}/sekuire/auth`,
+        auth,
+      );
+      this.sessionToken = authResult.sessionToken;
 
       return {
         agentId: welcome.agentId,
         verified: true,
         credentials: welcome.credentials,
+        sessionToken: authResult.sessionToken,
       };
     } catch (error) {
       if (
@@ -208,6 +215,62 @@ export class SekuireClient {
    */
   sign(data: string): string {
     return SekuireCrypto.sign(data, this.keyPair.privateKey);
+  }
+
+  private buildRequestSignatureMessage(
+    method: string,
+    path: string,
+    timestampMs: number,
+    body?: unknown,
+  ): string {
+    const normalizedBody = body === undefined ? "" : JSON.stringify(body);
+    const bodyHash = SekuireCrypto.hash(normalizedBody);
+    return `${method.toUpperCase()}\n${path}\n${timestampMs}\n${bodyHash}`;
+  }
+
+  /**
+   * Build signed headers for protected agent endpoints (for example /chat, /webhook).
+   * Requires a successful connect() call to obtain a session token.
+   */
+  createSignedRequestHeaders(
+    method: string,
+    path: string,
+    body?: unknown,
+    timestampMs: number = Date.now(),
+  ): Record<string, string> {
+    if (!this.sessionToken) {
+      throw new ProtocolError(
+        "No active session token. Call connect() before signing requests.",
+      );
+    }
+
+    const message = this.buildRequestSignatureMessage(
+      method,
+      path,
+      timestampMs,
+      body,
+    );
+    const signature = SekuireCrypto.sign(message, this.keyPair.privateKey);
+
+    return {
+      "x-sekuire-session": this.sessionToken,
+      "x-sekuire-timestamp": String(Math.floor(timestampMs)),
+      "x-sekuire-signature": signature,
+    };
+  }
+
+  /**
+   * Get the current authenticated session token, if any.
+   */
+  getSessionToken(): string | undefined {
+    return this.sessionToken;
+  }
+
+  /**
+   * Clear the local session token.
+   */
+  clearSession(): void {
+    this.sessionToken = undefined;
   }
 
   /**

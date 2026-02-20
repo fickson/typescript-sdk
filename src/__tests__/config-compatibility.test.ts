@@ -20,11 +20,7 @@ async function writeCommonFiles(root: string): Promise<{
   const toolsPath = path.join(root, 'tools.json');
 
   await fs.writeFile(promptPath, 'You are a compatibility test agent.', 'utf-8');
-  await fs.writeFile(
-    toolsPath,
-    JSON.stringify({ version: '1.0', tools: [] }, null, 2),
-    'utf-8',
-  );
+  await fs.writeFile(toolsPath, JSON.stringify({ version: '1.0', tools: [] }, null, 2), 'utf-8');
 
   return { promptPath, toolsPath };
 }
@@ -93,12 +89,8 @@ agent:
     expect(() => enforcer.enforceTool('file_read')).toThrow();
 
     expect(() => enforcer.enforceNetwork('api.duckduckgo.com', 'https')).not.toThrow();
-    expect(() =>
-      enforcer.enforceFilesystem(path.join(dataDir, 'note.txt'), 'read'),
-    ).not.toThrow();
-    expect(() =>
-      enforcer.enforceFilesystem(path.join(root, 'outside.txt'), 'read'),
-    ).toThrow();
+    expect(() => enforcer.enforceFilesystem(path.join(dataDir, 'note.txt'), 'read')).not.toThrow();
+    expect(() => enforcer.enforceFilesystem(path.join(root, 'outside.txt'), 'read')).toThrow();
   });
 
   it('supports file memory backend from generated config syntax', async () => {

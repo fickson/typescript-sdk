@@ -52,7 +52,9 @@ describe('Standalone: Identity V2', () => {
   it('should ignore projectName and projectVersion', () => {
     const base = { model: 'gpt-4o', systemPrompt: 'test', tools: '[]' };
     const withProject = { ...base, projectName: 'A', projectVersion: '1.0' };
-    expect(SekuireCrypto.calculateSekuireId(base)).toBe(SekuireCrypto.calculateSekuireId(withProject));
+    expect(SekuireCrypto.calculateSekuireId(base)).toBe(
+      SekuireCrypto.calculateSekuireId(withProject)
+    );
   });
 
   it('should produce same ID regardless of JSON whitespace in tools', () => {
@@ -71,10 +73,14 @@ describe('Standalone: Identity V2', () => {
 
   it('should trim prompt whitespace', () => {
     const id1 = SekuireCrypto.calculateSekuireId({
-      model: 'gpt-4o', systemPrompt: '  hello  ', tools: '[]',
+      model: 'gpt-4o',
+      systemPrompt: '  hello  ',
+      tools: '[]',
     });
     const id2 = SekuireCrypto.calculateSekuireId({
-      model: 'gpt-4o', systemPrompt: 'hello', tools: '[]',
+      model: 'gpt-4o',
+      systemPrompt: 'hello',
+      tools: '[]',
     });
     expect(id1).toBe(id2);
   });

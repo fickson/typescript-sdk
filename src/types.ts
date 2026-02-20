@@ -99,6 +99,27 @@ export interface HandshakeAuth {
   clientNonce?: string; // Echo of HELLO nonce (optional for backwards compatibility)
 }
 
+export interface HandshakeAuthResult {
+  success: true;
+  sessionToken: string;
+  expiresInSeconds: number;
+}
+
+export interface SignedRequestVerificationInput {
+  method: string;
+  path: string;
+  body?: unknown;
+  sessionToken: string | string[] | undefined;
+  timestamp: string | number | string[] | undefined;
+  signature: string | string[] | undefined;
+}
+
+export interface VerifiedRequestContext {
+  sessionToken: string;
+  clientPublicKey: string;
+  timestampMs: number;
+}
+
 // --- Verification & Disputes ---
 
 export interface VerifyAgentRequest {
@@ -193,6 +214,7 @@ export interface HandshakeResult {
   agentId: string;
   verified: boolean;
   credentials: string[];
+  sessionToken?: string;
 }
 
 // --- Error Types ---

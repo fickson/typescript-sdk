@@ -74,6 +74,24 @@ export interface HandshakeAuth {
     clientPublicKey: string;
     clientNonce?: string;
 }
+export interface HandshakeAuthResult {
+    success: true;
+    sessionToken: string;
+    expiresInSeconds: number;
+}
+export interface SignedRequestVerificationInput {
+    method: string;
+    path: string;
+    body?: unknown;
+    sessionToken: string | string[] | undefined;
+    timestamp: string | number | string[] | undefined;
+    signature: string | string[] | undefined;
+}
+export interface VerifiedRequestContext {
+    sessionToken: string;
+    clientPublicKey: string;
+    timestampMs: number;
+}
 export interface VerifyAgentRequest {
     sekuireId: string;
     status: VerificationStatus;
@@ -149,6 +167,7 @@ export interface HandshakeResult {
     agentId: string;
     verified: boolean;
     credentials: string[];
+    sessionToken?: string;
 }
 export declare class SekuireError extends Error {
     readonly code: string;

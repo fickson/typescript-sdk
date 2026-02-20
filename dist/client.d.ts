@@ -5,6 +5,7 @@ import { type AgentResponse, type HandshakeResult, type KeyPair, type SekuireCli
 export declare class SekuireClient {
     private readonly keyPair;
     private readonly httpClient;
+    private sessionToken?;
     constructor(keyPair: KeyPair, config: SekuireClientConfig);
     /**
      * Perform the full handshake with a remote agent
@@ -30,6 +31,20 @@ export declare class SekuireClient {
      * Sign data with the client's private key
      */
     sign(data: string): string;
+    private buildRequestSignatureMessage;
+    /**
+     * Build signed headers for protected agent endpoints (for example /chat, /webhook).
+     * Requires a successful connect() call to obtain a session token.
+     */
+    createSignedRequestHeaders(method: string, path: string, body?: unknown, timestampMs?: number): Record<string, string>;
+    /**
+     * Get the current authenticated session token, if any.
+     */
+    getSessionToken(): string | undefined;
+    /**
+     * Clear the local session token.
+     */
+    clearSession(): void;
     /**
      * Get the client's public key
      */

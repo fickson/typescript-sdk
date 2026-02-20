@@ -200,10 +200,48 @@ The SDK operates in two modes:
 - **Built-in tools**: Calculator, HTTP requests, file operations, directory listing, JSON processing, web search, environment access
 - **Policy enforcement**: Model allowlists, tool allowlists/blocklists, network domain rules, filesystem path restrictions, rate limits - all evaluated locally
 - **Streaming**: Token-by-token responses via `chatStream()`
-- **Memory**: In-memory buffer, Redis, PostgreSQL, SQLite, Upstash, Cloudflare KV/D1, DynamoDB, Turso, Convex
+- **Memory**: In-memory buffer, File (JSON), Redis, PostgreSQL, SQLite, Upstash, Cloudflare KV/D1, DynamoDB, Turso, Convex
 - **A2A protocol**: Agent-to-agent communication with task delegation, skill discovery, and streaming updates
 - **Telemetry**: OpenTelemetry integration with span tracing
 - **Cryptographic identity**: Ed25519 signing, BLAKE3 content-addressable agent IDs
+- **Signed endpoint auth**: Session-backed signatures for `/chat` and `/webhook` (via handshake + per-request signatures)
+
+---
+
+## Signed Endpoint Authentication
+
+The handshake (`/sekuire/hello` -> `/sekuire/auth`) now returns a short-lived `sessionToken`.
+Use it to sign protected endpoint calls (`/chat`, `/webhook`) with Ed25519.
+
+```typescript
+import { SekuireClient, SekuireCrypto } from "@sekuire/sdk";
+
+const clientKeys = SekuireCrypto.generateKeyPair();
+const client = new SekuireClient(clientKeys, {
+  registryUrl: "https://registry.sekuire.ai",
+});
+
+await client.connect("http://127.0.0.1:8000", "agent-id");
+
+const payload = { message: "Hello" };
+const headers = client.createSignedRequestHeaders("POST", "/chat", payload);
+
+const response = await fetch("http://127.0.0.1:8000/chat", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    ...headers,
+  },
+  body: JSON.stringify(payload),
+});
+```
+
+If you're using framework adapters:
+
+- Express: `createSekuireExpressRequestAuthMiddleware(server)`
+- Fastify: `createSekuireFastifyRequestAuthHook(server)`
+
+Generated TypeScript HTTP templates apply this protection by default.
 
 ---
 

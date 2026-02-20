@@ -1,12 +1,15 @@
 import { SekuireCrypto } from "./crypto";
 import {
   CryptoError,
+  type HandshakeAuthResult,
   type HandshakeAuth,
   type HandshakeHello,
   type HandshakeWelcome,
   type KeyPair,
   NetworkError,
   ProtocolError,
+  type SignedRequestVerificationInput,
+  type VerifiedRequestContext,
 } from "./types";
 
 /**
@@ -17,7 +20,13 @@ export abstract class SekuireServer {
     string,
     { agentNonce: string; createdAt: number }
   >();
+  private readonly activeSessions = new Map<
+    string,
+    { clientPublicKey: string; createdAt: number; lastSeenAt: number }
+  >();
   private static readonly HANDSHAKE_TTL_MS = 5 * 60 * 1000;
+  private static readonly SESSION_TTL_MS = 60 * 60 * 1000;
+  private static readonly REQUEST_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
   constructor(
     protected readonly agentId: string,
@@ -31,6 +40,59 @@ export abstract class SekuireServer {
         this.pendingHandshakes.delete(clientNonce);
       }
     }
+  }
+
+  private purgeExpiredSessions(): void {
+    const now = Date.now();
+    for (const [sessionToken, session] of this.activeSessions) {
+      if (now - session.createdAt > SekuireServer.SESSION_TTL_MS) {
+        this.activeSessions.delete(sessionToken);
+      }
+    }
+  }
+
+  private firstHeaderValue(value: unknown): string | undefined {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return String(Math.floor(value));
+    }
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    }
+    if (Array.isArray(value) && value.length > 0) {
+      return this.firstHeaderValue(value[0]);
+    }
+    return undefined;
+  }
+
+  private parseTimestamp(value: string): number {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      throw new ProtocolError("Missing request timestamp");
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return Math.floor(numeric);
+    }
+
+    const parsedDate = Date.parse(trimmed);
+    if (Number.isNaN(parsedDate)) {
+      throw new ProtocolError("Invalid request timestamp");
+    }
+    return parsedDate;
+  }
+
+  private buildRequestSignatureMessage(
+    method: string,
+    path: string,
+    timestampMs: number,
+    body?: unknown,
+  ): string {
+    const normalizedBody =
+      body === undefined ? "" : JSON.stringify(body);
+    const bodyHash = SekuireCrypto.hash(normalizedBody);
+    return `${method.toUpperCase()}\n${path}\n${timestampMs}\n${bodyHash}`;
   }
 
   /**
@@ -79,7 +141,10 @@ export abstract class SekuireServer {
   /**
    * Handle the AUTH handshake message
    */
-  async handleAuth(auth: HandshakeAuth, clientNonce: string): Promise<void> {
+  async handleAuth(
+    auth: HandshakeAuth,
+    clientNonce: string,
+  ): Promise<HandshakeAuthResult> {
     try {
       if (!SekuireCrypto.isValidHex(auth.signatureA)) {
         throw new ProtocolError("Invalid signature format");
@@ -116,12 +181,98 @@ export abstract class SekuireServer {
       }
 
       this.pendingHandshakes.delete(clientNonce);
+      this.purgeExpiredSessions();
+
+      const sessionToken = SekuireCrypto.generateNonce();
+      const now = Date.now();
+      this.activeSessions.set(sessionToken, {
+        clientPublicKey: auth.clientPublicKey,
+        createdAt: now,
+        lastSeenAt: now,
+      });
+
+      return {
+        success: true,
+        sessionToken,
+        expiresInSeconds: Math.floor(SekuireServer.SESSION_TTL_MS / 1000),
+      };
     } catch (error) {
       if (error instanceof ProtocolError || error instanceof CryptoError) {
         throw error;
       }
       throw new NetworkError(
         `Failed to handle AUTH: ${(error as Error).message}`,
+        error as Error,
+      );
+    }
+  }
+
+  /**
+   * Verify a signed request for protected application endpoints (for example /chat, /webhook).
+   * Requires a valid handshake session token and Ed25519 signature by the authenticated client key.
+   */
+  async verifySignedRequest(
+    input: SignedRequestVerificationInput,
+  ): Promise<VerifiedRequestContext> {
+    try {
+      const sessionToken = this.firstHeaderValue(input.sessionToken);
+      const signature = this.firstHeaderValue(input.signature);
+      const timestampRaw = this.firstHeaderValue(input.timestamp);
+
+      if (!sessionToken) {
+        throw new ProtocolError("Missing session token");
+      }
+      if (!signature) {
+        throw new ProtocolError("Missing request signature");
+      }
+      if (!timestampRaw) {
+        throw new ProtocolError("Missing request timestamp");
+      }
+      if (!SekuireCrypto.isValidHex(signature)) {
+        throw new ProtocolError("Invalid signature format");
+      }
+
+      const timestampMs = this.parseTimestamp(timestampRaw);
+      const now = Date.now();
+      if (Math.abs(now - timestampMs) > SekuireServer.REQUEST_CLOCK_SKEW_MS) {
+        throw new ProtocolError("Request timestamp is outside allowed skew");
+      }
+
+      this.purgeExpiredSessions();
+      const session = this.activeSessions.get(sessionToken);
+      if (!session) {
+        throw new ProtocolError("Invalid or expired session token");
+      }
+
+      const message = this.buildRequestSignatureMessage(
+        input.method,
+        input.path,
+        timestampMs,
+        input.body,
+      );
+      const verified = SekuireCrypto.verify(
+        message,
+        signature,
+        session.clientPublicKey,
+      );
+      if (!verified) {
+        throw new ProtocolError("Request signature verification failed");
+      }
+
+      session.lastSeenAt = now;
+      this.activeSessions.set(sessionToken, session);
+
+      return {
+        sessionToken,
+        clientPublicKey: session.clientPublicKey,
+        timestampMs,
+      };
+    } catch (error) {
+      if (error instanceof ProtocolError || error instanceof CryptoError) {
+        throw error;
+      }
+      throw new NetworkError(
+        `Failed to verify signed request: ${(error as Error).message}`,
         error as Error,
       );
     }
@@ -173,8 +324,8 @@ export function createSekuireExpressMiddleware(server: SekuireServer) {
             return res.status(400).json({ error: "Missing client nonce" });
           }
 
-          await server.handleAuth(req.body, clientNonce);
-          return res.json({ success: true });
+          const result = await server.handleAuth(req.body, clientNonce);
+          return res.json(result);
         } else if (req.path === "/sekuire/webhook" && req.method === "POST") {
           const signature = req.headers["x-sekuire-signature"];
           const result = await server.handleWebhook(req.body, signature);
@@ -189,6 +340,53 @@ export function createSekuireExpressMiddleware(server: SekuireServer) {
       }
     },
   ];
+}
+
+export interface RequestAuthOptions {
+  protectedPaths?: string[];
+}
+
+function normalizeRequestPath(path: string): string {
+  return path.split("?")[0] || path;
+}
+
+function isProtectedPath(path: string, protectedPaths: string[]): boolean {
+  const normalized = normalizeRequestPath(path);
+  return protectedPaths.includes(normalized);
+}
+
+/**
+ * Express middleware that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+export function createSekuireExpressRequestAuthMiddleware(
+  server: SekuireServer,
+  options?: RequestAuthOptions,
+) {
+  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+
+  return async (req: any, res: any, next: any) => {
+    if (
+      req.method !== "POST" ||
+      !isProtectedPath(req.path || req.url || "", protectedPaths)
+    ) {
+      return next();
+    }
+
+    try {
+      await server.verifySignedRequest({
+        method: req.method,
+        path: req.path || req.url,
+        body: req.body,
+        sessionToken: req.headers["x-sekuire-session"],
+        timestamp: req.headers["x-sekuire-timestamp"],
+        signature: req.headers["x-sekuire-signature"],
+      });
+      return next();
+    } catch (error) {
+      return res.status(401).json({ error: (error as Error).message });
+    }
+  };
 }
 
 /**
@@ -232,8 +430,8 @@ export function createSekuireFastifyPlugin(server: SekuireServer) {
           return { error: "Missing client nonce" };
         }
 
-        await server.handleAuth(request.body, clientNonce);
-        return { success: true };
+        const result = await server.handleAuth(request.body, clientNonce);
+        return result;
       } catch (error) {
         const statusCode = error instanceof ProtocolError ? 400 : 500;
         reply.code(statusCode);
@@ -251,5 +449,40 @@ export function createSekuireFastifyPlugin(server: SekuireServer) {
         return { error: (error as Error).message };
       }
     });
+  };
+}
+
+/**
+ * Fastify preHandler that enforces signed-request authentication for protected paths.
+ * Defaults to protecting POST /chat and POST /webhook.
+ */
+export function createSekuireFastifyRequestAuthHook(
+  server: SekuireServer,
+  options?: RequestAuthOptions,
+) {
+  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+
+  return async (request: any, reply: any) => {
+    if (
+      request.method !== "POST" ||
+      !isProtectedPath(request.url || "", protectedPaths)
+    ) {
+      return;
+    }
+
+    try {
+      await server.verifySignedRequest({
+        method: request.method,
+        path: normalizeRequestPath(request.url || ""),
+        body: request.body,
+        sessionToken: request.headers["x-sekuire-session"],
+        timestamp: request.headers["x-sekuire-timestamp"],
+        signature: request.headers["x-sekuire-signature"],
+      });
+    } catch (error) {
+      reply.code(401);
+      reply.send({ error: (error as Error).message });
+      return;
+    }
   };
 }

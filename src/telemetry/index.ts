@@ -26,7 +26,9 @@ function loadOtelModules() {
     try {
       _otelResources = require('@opentelemetry/resources');
     } catch {
-      throw new Error('@opentelemetry/resources is required for telemetry. Install it with: npm install @opentelemetry/resources');
+      throw new Error(
+        '@opentelemetry/resources is required for telemetry. Install it with: npm install @opentelemetry/resources'
+      );
     }
   }
 
@@ -34,7 +36,9 @@ function loadOtelModules() {
     try {
       _otelSdkTraceBase = require('@opentelemetry/sdk-trace-base');
     } catch {
-      throw new Error('@opentelemetry/sdk-trace-base is required for telemetry. Install it with: npm install @opentelemetry/sdk-trace-base');
+      throw new Error(
+        '@opentelemetry/sdk-trace-base is required for telemetry. Install it with: npm install @opentelemetry/sdk-trace-base'
+      );
     }
   }
 
@@ -42,7 +46,9 @@ function loadOtelModules() {
     try {
       _otelSemConv = require('@opentelemetry/semantic-conventions');
     } catch {
-      throw new Error('@opentelemetry/semantic-conventions is required for telemetry. Install it with: npm install @opentelemetry/semantic-conventions');
+      throw new Error(
+        '@opentelemetry/semantic-conventions is required for telemetry. Install it with: npm install @opentelemetry/semantic-conventions'
+      );
     }
   }
 
@@ -54,7 +60,9 @@ function loadOtelExporter() {
     try {
       _otelExporter = require('@opentelemetry/exporter-trace-otlp-http');
     } catch {
-      throw new Error('@opentelemetry/exporter-trace-otlp-http is required for OTLP export. Install it with: npm install @opentelemetry/exporter-trace-otlp-http');
+      throw new Error(
+        '@opentelemetry/exporter-trace-otlp-http is required for OTLP export. Install it with: npm install @opentelemetry/exporter-trace-otlp-http'
+      );
     }
   }
   return _otelExporter;
@@ -116,7 +124,9 @@ export function initTelemetry(config: TelemetryConfig): any {
       const otlpMod = loadOtelExporter();
       const endpoint = config.otlpEndpoint ?? 'http://localhost:4318/v1/traces';
       const otlpExporter = new otlpMod.OTLPTraceExporter({ url: endpoint });
-      globalProvider.addSpanProcessor(new sdkTraceBase.BatchSpanProcessor(otlpExporter, batchConfig));
+      globalProvider.addSpanProcessor(
+        new sdkTraceBase.BatchSpanProcessor(otlpExporter, batchConfig)
+      );
       break;
     }
     case 'sekuire': {
@@ -135,14 +145,18 @@ export function initTelemetry(config: TelemetryConfig): any {
       break;
     }
     case 'console':
-      globalProvider.addSpanProcessor(new sdkTraceBase.SimpleSpanProcessor(new sdkTraceBase.ConsoleSpanExporter()));
+      globalProvider.addSpanProcessor(
+        new sdkTraceBase.SimpleSpanProcessor(new sdkTraceBase.ConsoleSpanExporter())
+      );
       break;
     case 'none':
       break;
   }
 
   if (config.debug && exporterType !== 'console') {
-    globalProvider.addSpanProcessor(new sdkTraceBase.SimpleSpanProcessor(new sdkTraceBase.ConsoleSpanExporter()));
+    globalProvider.addSpanProcessor(
+      new sdkTraceBase.SimpleSpanProcessor(new sdkTraceBase.ConsoleSpanExporter())
+    );
   }
 
   globalProvider.register();
@@ -157,7 +171,15 @@ export function getTracer(): any {
     const api = loadOtelApi();
     return api.trace.getTracer('sekuire-noop');
   } catch {
-    return { startActiveSpan: (_name: string, fn: (span: any) => any) => fn({ setAttribute: () => {}, setStatus: () => {}, end: () => {}, recordException: () => {} }) };
+    return {
+      startActiveSpan: (_name: string, fn: (span: any) => any) =>
+        fn({
+          setAttribute: () => {},
+          setStatus: () => {},
+          end: () => {},
+          recordException: () => {},
+        }),
+    };
   }
 }
 

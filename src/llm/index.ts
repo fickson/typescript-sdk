@@ -13,7 +13,10 @@ export * from './types';
 /**
  * Create an LLM provider based on provider name
  */
-export async function createLLMProvider(provider: string, config: LLMProviderConfig): Promise<LLMProvider> {
+export async function createLLMProvider(
+  provider: string,
+  config: LLMProviderConfig
+): Promise<LLMProvider> {
   const normalizedProvider = provider.toLowerCase();
 
   switch (normalizedProvider) {
@@ -44,21 +47,21 @@ export const llm = {
   openai: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return OpenAIProvider.create({
       ...config,
-      model: config.model || 'gpt-5',
+      model: config.model || 'gpt-5.2',
     });
   },
 
   anthropic: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return AnthropicProvider.create({
       ...config,
-      model: config.model || 'claude-sonnet-4-5-20250929',
+      model: config.model || 'claude-sonnet-4-6',
     });
   },
 
   google: (config: Omit<LLMProviderConfig, 'model'> & { model?: string }) => {
     return GoogleProvider.create({
       ...config,
-      model: config.model || 'gemini-3.1-pro-preview-06-17',
+      model: config.model || 'gemini-3.1-pro-preview',
     });
   },
 
