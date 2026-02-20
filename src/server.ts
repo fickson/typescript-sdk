@@ -208,7 +208,7 @@ export abstract class SekuireServer {
   }
 
   /**
-   * Verify a signed request for protected application endpoints (for example /chat, /webhook).
+   * Verify a signed request for protected application endpoints (for example /chat, /webhook, /a2a/tasks).
    * Requires a valid handshake session token and Ed25519 signature by the authenticated client key.
    */
   async verifySignedRequest(
@@ -357,13 +357,13 @@ function isProtectedPath(path: string, protectedPaths: string[]): boolean {
 
 /**
  * Express middleware that enforces signed-request authentication for protected paths.
- * Defaults to protecting POST /chat and POST /webhook.
+ * Defaults to protecting POST /chat, POST /webhook, and POST /a2a/tasks.
  */
 export function createSekuireExpressRequestAuthMiddleware(
   server: SekuireServer,
   options?: RequestAuthOptions,
 ) {
-  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook", "/a2a/tasks"];
 
   return async (req: any, res: any, next: any) => {
     if (
@@ -454,13 +454,13 @@ export function createSekuireFastifyPlugin(server: SekuireServer) {
 
 /**
  * Fastify preHandler that enforces signed-request authentication for protected paths.
- * Defaults to protecting POST /chat and POST /webhook.
+ * Defaults to protecting POST /chat, POST /webhook, and POST /a2a/tasks.
  */
 export function createSekuireFastifyRequestAuthHook(
   server: SekuireServer,
   options?: RequestAuthOptions,
 ) {
-  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook"];
+  const protectedPaths = options?.protectedPaths ?? ["/chat", "/webhook", "/a2a/tasks"];
 
   return async (request: any, reply: any) => {
     if (

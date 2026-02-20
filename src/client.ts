@@ -229,7 +229,7 @@ export class SekuireClient {
   }
 
   /**
-   * Build signed headers for protected agent endpoints (for example /chat, /webhook).
+   * Build signed headers for protected agent endpoints (for example /chat, /webhook, /a2a/tasks).
    * Requires a successful connect() call to obtain a session token.
    */
   createSignedRequestHeaders(
