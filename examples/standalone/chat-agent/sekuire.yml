@@ -2,17 +2,16 @@ project:
   name: chat-agent
   version: 1.0.0
 
-agents:
-  assistant:
-    name: assistant
-    system_prompt: ./prompt.md
-    tools: ./tools.json
-    llm:
-      provider: openai
-      model: gpt-4o-mini
-      api_key_env: OPENAI_API_KEY
-      temperature: 0.7
-      max_tokens: 1024
-    memory:
-      type: in-memory
-      max_messages: 20
+agent:
+  name: Assistant
+  system_prompt: ./system_prompt.md
+  tools: ./tools.json
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.7
+    max_tokens: 1024
+  memory:
+    type: in-memory
+    max_messages: 20

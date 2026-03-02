@@ -2,6 +2,7 @@ import axios, { type AxiosInstance } from "axios";
 import fs from "node:fs";
 import path from "node:path";
 import { v4 as uuidv4 } from "uuid";
+import { SekuireCrypto } from "./crypto";
 
 export type EventType =
   | "tool_execution"
@@ -32,6 +33,7 @@ export interface LoggerConfig {
   fallback?: FallbackMode;
   fallbackFilePath?: string;
   maxBufferSize?: number;
+  privateKey?: string;
 }
 
 export interface EventLog {
@@ -43,6 +45,7 @@ export interface EventLog {
   event_timestamp: string;
   event_data: Record<string, any>;
   metadata: Record<string, any>;
+  signature?: string;
 }
 
 interface RetryBatch {
@@ -65,6 +68,7 @@ export class SekuireLogger {
   private readonly maxBufferSize: number;
   private readonly maxRetries: number;
   private readonly retryBaseDelay: number;
+  private readonly privateKey?: string;
 
   constructor(config: LoggerConfig) {
     this.config = {
@@ -88,6 +92,7 @@ export class SekuireLogger {
     this.maxBufferSize = this.config.maxBufferSize;
     this.maxRetries = this.config.maxRetries;
     this.retryBaseDelay = this.config.retryBaseDelay;
+    this.privateKey = this.config.privateKey;
     this.apiAvailable = !!(this.config.apiBaseUrl);
 
     if (this.apiAvailable) {
@@ -132,9 +137,27 @@ export class SekuireLogger {
       },
     };
 
+    if (this.privateKey) {
+      try {
+        const payload = JSON.stringify({
+          sekuire_id: event.sekuire_id,
+          event_type: event.event_type,
+          event_timestamp: event.event_timestamp,
+          event_data: event.event_data,
+        });
+        event.signature = SekuireCrypto.sign(payload, this.privateKey);
+      } catch {
+        // Signing failed - send unsigned rather than dropping the event
+      }
+    }
+
     if (this.buffer.length >= this.maxBufferSize) {
       const overflow = this.buffer.splice(0, Math.max(1, Math.floor(this.maxBufferSize * 0.1)));
       this.overflowEventsTotal += overflow.length;
+      console.warn(
+        `[sekuire][logger] Buffer overflow: ${overflow.length} events evicted (${this.overflowEventsTotal} total lost). ` +
+        `Consider increasing maxBufferSize or reducing flush interval.`,
+      );
       this.writeFallback(overflow);
     }
 

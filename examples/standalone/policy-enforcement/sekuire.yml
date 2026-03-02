@@ -1,6 +1,28 @@
 project:
-  name: policy-enforcement-demo
+  name: policy-demo
   version: 1.0.0
+
+agent:
+  name: Restricted Assistant
+  system_prompt: ./system_prompt.md
+  tools: ./tools.json
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+  models:
+    allowed_models:
+      - gpt-4o-mini
+      - gpt-4o
+    blocked_models:
+      - gpt-3.5-turbo
+  toolsets:
+    allowed_tools:
+      - name: calculator
+      - name: web_search
+    blocked_tools:
+      - env_set
+      - file_delete
 
 permissions:
   network:
@@ -11,3 +33,20 @@ permissions:
       - api.anthropic.com
     blocked_domains:
       - evil.com
+      - "*.malware.net"
+  filesystem:
+    enabled: true
+    allowed_paths:
+      - "./data/*"
+      - "/tmp/*"
+    blocked_paths:
+      - "/etc/*"
+      - "~/.ssh/*"
+    allowed_extensions:
+      - .txt
+      - .json
+      - .csv
+
+rate_limits:
+  per_agent:
+    requests_per_minute: 10

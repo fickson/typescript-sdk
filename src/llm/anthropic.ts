@@ -34,6 +34,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<ChatResponse> {
+    this.enforcePreCall();
     try {
       const systemMessage = messages.find((m) => m.role === 'system');
       const conversationMessages = messages.filter((m) => m.role !== 'system');
@@ -56,15 +57,19 @@ export class AnthropicProvider extends BaseLLMProvider {
         .map((block: any) => block.text)
         .join('');
 
+      const usage = {
+        prompt_tokens: response.usage.input_tokens,
+        completion_tokens: response.usage.output_tokens,
+        total_tokens: response.usage.input_tokens + response.usage.output_tokens,
+      };
+
+      this.enforcePostCall(usage);
+
       return {
         content,
         model: response.model,
         finish_reason: response.stop_reason || undefined,
-        usage: {
-          prompt_tokens: response.usage.input_tokens,
-          completion_tokens: response.usage.output_tokens,
-          total_tokens: response.usage.input_tokens + response.usage.output_tokens,
-        },
+        usage,
       };
     } catch (error) {
       throw new Error(`Anthropic API error: ${(error as Error).message}`);
@@ -72,6 +77,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   }
 
   async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<ChatChunk> {
+    this.enforcePreCall();
     try {
       const systemMessage = messages.find((m) => m.role === 'system');
       const conversationMessages = messages.filter((m) => m.role !== 'system');

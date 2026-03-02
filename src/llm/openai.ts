@@ -35,6 +35,7 @@ export class OpenAIProvider extends BaseLLMProvider {
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<ChatResponse> {
+    this.enforcePreCall();
     try {
       const response = await this.client.chat.completions.create({
         model: this.model,
@@ -49,6 +50,16 @@ export class OpenAIProvider extends BaseLLMProvider {
         tools: options?.tools as any[] | undefined,
       });
 
+      const usage = response.usage
+        ? {
+            prompt_tokens: response.usage.prompt_tokens,
+            completion_tokens: response.usage.completion_tokens,
+            total_tokens: response.usage.total_tokens,
+          }
+        : undefined;
+
+      this.enforcePostCall(usage);
+
       return {
         content: response.choices[0]?.message?.content || '',
         model: response.model,
@@ -56,13 +67,7 @@ export class OpenAIProvider extends BaseLLMProvider {
         tool_calls: response.choices[0]?.message?.tool_calls?.filter(
           (tc: any) => tc.type === 'function' && 'function' in tc
         ),
-        usage: response.usage
-          ? {
-              prompt_tokens: response.usage.prompt_tokens,
-              completion_tokens: response.usage.completion_tokens,
-              total_tokens: response.usage.total_tokens,
-            }
-          : undefined,
+        usage,
       };
     } catch (error) {
       throw new Error(`OpenAI API error: ${(error as Error).message}`);
@@ -70,6 +75,7 @@ export class OpenAIProvider extends BaseLLMProvider {
   }
 
   async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<ChatChunk> {
+    this.enforcePreCall();
     try {
       const stream = await this.client.chat.completions.create({
         model: this.model,

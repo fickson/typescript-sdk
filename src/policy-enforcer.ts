@@ -16,18 +16,36 @@ export class PolicyEnforcer {
     private readonly onViolation?: ViolationHandler,
   ) {
     const envOverride = process.env[DEFAULT_OVERRIDE_ENV] === "true";
-    this.override = override ?? envOverride;
+    const isProduction = process.env.NODE_ENV === "production";
+    const requestedOverride = override ?? envOverride;
+
+    if (requestedOverride && isProduction) {
+      console.error(
+        "[policy] SEKUIRE_POLICY_DEV_OVERRIDE is ignored in production (NODE_ENV=production). " +
+        "Policy enforcement is active.",
+      );
+      this.override = false;
+    } else {
+      this.override = requestedOverride;
+    }
+
     if (this.override) {
       console.warn(
-        "[policy] override enabled; policy enforcement is running in warn-only mode",
+        "[policy] override enabled; policy enforcement is running in warn-only mode. " +
+        "This MUST NOT be used in production.",
       );
+    }
+
+    Object.freeze(this.policy);
+    if (this.policy.content) {
+      Object.freeze(this.policy.content);
     }
   }
 
   enforceNetwork(domain: string, protocol: string): void {
     const perms = this.policy.content?.permissions?.network;
     if (!perms) {
-      this.warnOnly("network.missing", "Network permissions not configured");
+      this.warnOnly("network.missing", "Network permissions not configured - defaulting to allow. Configure permissions.network in sekuire.yml for enforcement.");
       return;
     }
     if (!perms.enabled)
@@ -52,7 +70,7 @@ export class PolicyEnforcer {
   enforceFilesystem(path: string, operation: string): void {
     const perms = this.policy.content?.permissions?.filesystem;
     if (!perms) {
-      this.warnOnly("fs.missing", "Filesystem permissions not configured");
+      this.warnOnly("fs.missing", "Filesystem permissions not configured - defaulting to allow. Configure permissions.filesystem in sekuire.yml for enforcement.");
       return;
     }
     if (!perms.enabled)
@@ -74,32 +92,26 @@ export class PolicyEnforcer {
   enforceTool(toolName: string): void {
     const tools = this.policy.content?.tools;
 
-    // Check blocked tools
     if (tools?.blocked_tools?.includes(toolName)) {
       this.throw("tool.blocked", `Tool ${toolName} is blocked`);
     }
 
-    // If no allowlist, allow all tools
     if (!tools?.allowed_tools || tools.allowed_tools.length === 0) {
       return;
     }
 
-    // Check allowlist with pattern matching
     const isAllowed = tools.allowed_tools.some((t: ToolDefinition) => {
       const pattern = t.name;
 
-      // Exact match
       if (pattern === toolName) {
         return true;
       }
 
-      // Category patterns: "files:*" or "files:[read,write]"
       if (pattern.includes(":")) {
         const [category, ops] = pattern.split(":", 2);
         return this.matchesCategoryPattern(category, ops, toolName);
       }
 
-      // Pattern matching: "file_*", etc (simple wildcards without :)
       if (pattern.includes("*")) {
         const regex = new RegExp("^" + pattern.replace(/\*/g, ".*") + "$");
         return regex.test(toolName);
@@ -222,7 +234,7 @@ export class PolicyEnforcer {
   enforceApi(service: string): void {
     const perms = this.policy.content?.permissions?.api;
     if (!perms) {
-      this.warnOnly("api.missing", "API permissions not configured");
+      this.warnOnly("api.missing", "API permissions not configured - defaulting to allow. Configure permissions.api in sekuire.yml for enforcement.");
       return;
     }
     if (!perms.enabled) this.throw("api.disabled", "API access is disabled");
@@ -258,6 +270,10 @@ export class PolicyEnforcer {
     if (type === "token" && limits.tokens_per_minute) {
       this.checkWindow(`tok_60`, 60_000, limits.tokens_per_minute, count, now);
     }
+  }
+
+  isOverrideEnabled(): boolean {
+    return this.override;
   }
 
   private checkWindow(key: string, windowMs: number, limit: number, count: number, now: number): void {

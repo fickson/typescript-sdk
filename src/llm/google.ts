@@ -40,6 +40,7 @@ export class GoogleProvider extends BaseLLMProvider {
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<ChatResponse> {
+    this.enforcePreCall();
     try {
       const { HarmCategory, HarmBlockThreshold } = await loadGoogleSDK();
       const tools = this.buildTools(options);
@@ -96,16 +97,20 @@ export class GoogleProvider extends BaseLLMProvider {
 
       const content = functionCalls && functionCalls.length > 0 ? '' : (response.text ?? '');
 
+      const usage = {
+        prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
+        completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
+        total_tokens: response.usageMetadata?.totalTokenCount || 0,
+      };
+
+      this.enforcePostCall(usage);
+
       return {
         content,
         model: this.model,
         finish_reason: response.candidates?.[0]?.finishReason || undefined,
         ...(tool_calls && tool_calls.length > 0 && { tool_calls }),
-        usage: {
-          prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-          completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
-          total_tokens: response.usageMetadata?.totalTokenCount || 0,
-        },
+        usage,
       };
     } catch (error) {
       throw new Error(`Google API error: ${(error as Error).message}`);
@@ -113,6 +118,7 @@ export class GoogleProvider extends BaseLLMProvider {
   }
 
   async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<ChatChunk> {
+    this.enforcePreCall();
     try {
       const systemMessage = messages.find((m) => m.role === 'system');
       const conversationMessages = messages.filter((m) => m.role !== 'system');

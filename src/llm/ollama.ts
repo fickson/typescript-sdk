@@ -40,6 +40,7 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   async chat(messages: Message[], options?: ChatOptions): Promise<ChatResponse> {
+    this.enforcePreCall();
     try {
       const requestBody: OllamaChatRequest = {
         model: this.model,
@@ -70,15 +71,19 @@ export class OllamaProvider extends BaseLLMProvider {
 
       const data = (await response.json()) as OllamaChatResponse;
 
+      const usage = {
+        prompt_tokens: data.prompt_eval_count || 0,
+        completion_tokens: data.eval_count || 0,
+        total_tokens: (data.prompt_eval_count || 0) + (data.eval_count || 0),
+      };
+
+      this.enforcePostCall(usage);
+
       return {
         content: data.message.content,
         model: data.model,
         finish_reason: data.done ? 'stop' : undefined,
-        usage: {
-          prompt_tokens: data.prompt_eval_count || 0,
-          completion_tokens: data.eval_count || 0,
-          total_tokens: (data.prompt_eval_count || 0) + (data.eval_count || 0),
-        },
+        usage,
       };
     } catch (error) {
       throw new Error(`Ollama API error: ${(error as Error).message}`);
@@ -86,6 +91,7 @@ export class OllamaProvider extends BaseLLMProvider {
   }
 
   async *chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<ChatChunk> {
+    this.enforcePreCall();
     try {
       const requestBody: OllamaChatRequest = {
         model: this.model,

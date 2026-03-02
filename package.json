@@ -23,7 +23,10 @@
     "lint:fix": "biome check src/**/*.ts --write",
     "format": "biome format src/**/*.ts --write",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "release:preflight": "node scripts/release-preflight.mjs",
+    "release:preflight:runtime": "node scripts/release-preflight.mjs --check-runtime --check-k8s --skip-build --skip-test --skip-package-smoke",
+    "release:smoke:npm": "node scripts/release-preflight.mjs --mode=postpublish"
   },
   "keywords": [
     "ai",

@@ -14,6 +14,7 @@ import { createMemoryStorage, type MemoryFactoryConfig, type MemoryMessage, type
 import type { ActivePolicy } from './policy';
 import { PolicyEnforcer } from './policy-enforcer';
 import { getTracer } from './telemetry';
+import type { BaseLLMProvider } from './llm/base-provider';
 import { createDefaultToolRegistry, type Tool } from './tools';
 
 try {
@@ -837,8 +838,11 @@ export async function getAgent(
 
     policyEnforcer = new PolicyEnforcer(activePolicy);
   } catch (error) {
-    // No policy configured - proceed without enforcement
-    // console.warn(`⚠️  No policy configured. Running in unrestricted mode.`);
+    console.warn('[sekuire] No policy configured. Running in unrestricted mode. Add a permissions section to sekuire.yml for enforcement.');
+  }
+
+  if (policyEnforcer && 'setPolicyEnforcer' in llmProvider) {
+    (llmProvider as BaseLLMProvider).setPolicyEnforcer(policyEnforcer);
   }
 
   if (!ctaShown && !process.env.SEKUIRE_INSTALL_TOKEN && process.env.SEKUIRE_NO_CTA !== 'true') {

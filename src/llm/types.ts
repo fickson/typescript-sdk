@@ -59,35 +59,13 @@ export interface ChatChunk {
  * Base interface for LLM providers
  */
 export interface LLMProvider {
-  /**
-   * Send chat messages and get response
-   */
   chat(messages: Message[], options?: ChatOptions): Promise<ChatResponse>;
-
-  /**
-   * Stream chat response
-   */
   chatStream(messages: Message[], options?: ChatOptions): AsyncGenerator<ChatChunk>;
-
-  /**
-   * Count tokens in text (approximate)
-   */
   countTokens(text: string): number;
-
-  /**
-   * Get maximum context window size
-   */
   getMaxTokens(): number;
-
-  /**
-   * Get provider name
-   */
   getProviderName(): string;
-
-  /**
-   * Get model name
-   */
   getModelName(): string;
+  setPolicyEnforcer?(enforcer: unknown): void;
 }
 
 /**
