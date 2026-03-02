@@ -35,6 +35,14 @@ jobs:
         with:
           version: 9
 
+      - name: Load secrets from 1Password
+        uses: 1password/load-secrets-action@v2
+        with:
+          export-env: true
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN_PRODUCTION }}
+          NPM_TOKEN: op://Sekuire Production/Sekuire Release Tokens/NPM_TOKEN
+
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
@@ -64,7 +72,7 @@ jobs:
       - name: Publish to npm
         run: npm publish --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ env.NPM_TOKEN }}
 
       - name: Post-publish Smoke Check
         run: node scripts/release-preflight.mjs --mode=postpublish --version="${{ env.TS_VERSION }}"
