@@ -1,0 +1,58 @@
+project:
+  name: vercel-ai-sdk-integration
+  version: 1.0.0
+
+agent:
+  name: Research Assistant
+  system_prompt: ./system_prompt.md
+  tools: ./tools.json
+  llm:
+    provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.7
+    max_tokens: 1024
+  memory:
+    type: in-memory
+    max_messages: 20
+  models:
+    allowed_models:
+      - gpt-4o-mini
+      - gpt-4o
+    blocked_models:
+      - gpt-3.5-turbo
+  toolsets:
+    allowed_tools:
+      - name: web_search
+      - name: "files:read"
+      - name: calculator
+    blocked_tools:
+      - file_delete
+      - env_set
+
+permissions:
+  network:
+    enabled: true
+    require_tls: true
+    allowed_domains:
+      - api.openai.com
+      - "*.wikipedia.org"
+    blocked_domains:
+      - "*.malware.net"
+  filesystem:
+    enabled: true
+    allowed_paths:
+      - "./data/*"
+      - "/tmp/*"
+    blocked_paths:
+      - "/etc/*"
+      - "~/.ssh/*"
+    allowed_extensions:
+      - .txt
+      - .json
+      - .csv
+      - .md
+
+rate_limits:
+  per_agent:
+    requests_per_minute: 10
