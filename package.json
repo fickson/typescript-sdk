@@ -45,7 +45,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sekuire/sekuire.git"
+    "url": "git+https://github.com/fickson/platform.git"
   },
   "publishConfig": {
     "access": "public",
