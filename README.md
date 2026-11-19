@@ -1,6 +1,6 @@
 # @sekuire/sdk
 
-TypeScript SDK for building governed AI agents. Reference implementation of the [Open Agent Governance Specification (OAGS)](https://github.com/sekuire/oags).
+TypeScript SDK for building governed AI agents. Reference implementation of the [Open Agent Governance Specification (OAGS)](https://github.com/fickson/oags).
 
 ```bash
 npm install @sekuire/sdk
